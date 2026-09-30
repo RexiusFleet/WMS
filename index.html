@@ -1522,7 +1522,7 @@
   function recurringRoster(ym) {
     return state.rentals.filter(function (r) {
       return !r.endDate && r.addedToRecurring && (!r.recurringSetMonth || r.recurringSetMonth < ym);
-    });
+    }).sort(function (a, b) { return customerName(a.customerId).localeCompare(customerName(b.customerId)); });
   }
   function generateRecurringForMonth(ym) {
     var list = recurringRoster(ym).filter(function (r) { return monthKey(r.startDate) <= ym; });
