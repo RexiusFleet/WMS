@@ -1689,16 +1689,20 @@
     /* Stage 4: roster */
     var rosterRows = roster.map(function (r) {
       var existingInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "recurring" && i.periodMonth === ym; });
+      var cont = containerById(r.containerId);
       var actionBtn = existingInv
         ? '<button class="btn sm ' + (existingInv.status === "paid" ? "ghost" : "danger") + '" data-act="bill-recurring-toggle" data-id="' + esc(r.id) + '">' + (existingInv.status === "paid" ? "Paid — locked" : "Undo") + "</button>"
         : '<button class="btn sm primary" data-act="bill-recurring-toggle" data-id="' + esc(r.id) + '">Bill</button>';
       return "<tr>" +
-        '<td class="cid">' + esc(containerLabel(r.containerId)) + "</td>" +
         "<td>" + customerCellHtml(r.customerId) + "</td>" +
+        "<td>" + esc(cont ? cont.type : "—") + "</td>" +
         '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
+        '<td class="cid">' + esc(containerLabel(r.containerId)) + "</td>" +
+        "<td>" + (esc(r.shipToAddress) || "—") + "</td>" +
+        '<td class="num">' + fmtDate(r.startDate) + "</td>" +
         '<td class="right">' + actionBtn + "</td></tr>";
     }).join("");
-    if (!roster.length) rosterRows = '<tr><td colspan="4" class="empty-row">No rentals are flagged as on-recurring yet.</td></tr>';
+    if (!roster.length) rosterRows = '<tr><td colspan="7" class="empty-row">No rentals are flagged as on-recurring yet.</td></tr>';
 
     v.innerHTML =
       '<div class="pagehead"><div><h2>Billing</h2><div class="sub">The same four steps as your monthly close — new rentals, returns, recurring setup, and the standing roster</div></div>' +
@@ -1724,7 +1728,7 @@
 
       '<div class="panel"><div class="panel-head"><div><h3><span class="stage-badge">4</span>&nbsp; Recurring roster</h3><p class="panel-sub">' + roster.length + ' rentals on the accounting system\'s auto-bill. Generates a flat monthly invoice per unit for ' + monthLabel(ym) + '.</p></div>' +
       '<button class="btn primary sm" data-act="bill-recurring-generate">Generate recurring invoices</button></div>' +
-      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Customer</th><th>Rate/mo</th><th></th></tr></thead><tbody>' + rosterRows + "</tbody></table></div>" +
+      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Size</th><th>Monthly rent</th><th>Container #</th><th>Ship to address</th><th>Delivered</th><th></th></tr></thead><tbody>' + rosterRows + "</tbody></table></div>" +
       "</div>";
   }
 
