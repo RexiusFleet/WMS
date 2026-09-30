@@ -1614,7 +1614,7 @@
       var actionBtn = existingInv
         ? '<button class="btn sm ' + (existingInv.status === "paid" ? "ghost" : "danger") + '" data-act="bill-new-toggle" data-id="' + esc(r.id) + '">' + (existingInv.status === "paid" ? "Paid — locked" : "Undo") + "</button>"
         : '<button class="btn sm primary" data-act="bill-new-toggle" data-id="' + esc(r.id) + '">Done</button>';
-      return "<tr>" +
+      return '<tr class="row-clickable" data-act="bill-cust-expand" data-id="' + esc(r.customerId) + '" data-rental-id="' + esc(r.id) + '" style="cursor:pointer">' +
         "<td>" + billingNewRentalCustomerCellHtml(r.customerId, r.id) + "</td>" +
         "<td>" + esc(cont ? cont.type : "—") + "</td>" +
         '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
