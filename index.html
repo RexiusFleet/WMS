@@ -3815,7 +3815,11 @@
     "rental-schedule-return-confirm": function (t) { rentalScheduleReturnConfirm(t.getAttribute("data-id")); },
     "rental-view": function (t) { ui.rentalView = t.getAttribute("data-view"); render(); },
     "bill-new-toggle": function (t) { toggleNewRentalInvoice(t.getAttribute("data-id")); },
-    "bill-cust-expand": function (t) { ui.billingExpandRentalId = t.getAttribute("data-rental-id"); render(); },
+    "bill-cust-expand": function (t) {
+      var rid = t.getAttribute("data-rental-id");
+      ui.billingExpandRentalId = (ui.billingExpandRentalId === rid) ? null : rid;
+      render();
+    },
     "bill-cust-collapse": function () { ui.billingExpandRentalId = null; render(); },
     "bill-cust-save": function (t) {
       var id = t.getAttribute("data-id");
