@@ -1587,7 +1587,7 @@
   function customerIsIncomplete(customerId) {
     var c = customerById(customerId);
     if (!c) return true;
-    return !c.accountNumber || !c.email || !c.billingAddress;
+    return !c.accountNumber;
   }
   function billingContainerCell(containerId) {
     if (!containerId || /^RN-/.test(containerId)) return "—";
