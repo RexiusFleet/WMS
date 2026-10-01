@@ -47,7 +47,8 @@
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
   @media (max-width:720px){ .grid2 { grid-template-columns:1fr; } }
   @media (max-width:480px){ .overlay { padding:12px 8px; } .modal-body { max-height:80vh; } }
-  .panel { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:18px; }
+  .panel { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:18px; position:relative; }
+  .panel-pending-badge { position:absolute; top:-10px; right:-10px; background:var(--danger); color:#fff; font-size:12px; font-weight:700; min-width:24px; height:24px; border-radius:12px; display:flex; align-items:center; justify-content:center; padding:0 7px; box-shadow:0 2px 6px rgba(0,0,0,.25); border:2px solid var(--surface); }
   .panel h3 { margin:0 0 4px; font-size:14px; font-weight:650; }
   .panel .panel-sub { margin:0 0 12px; font-size:12.5px; color:var(--muted); }
   .panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
@@ -1589,9 +1590,10 @@
     if (!containerId || /^RN-/.test(containerId)) return "—";
     return esc(containerLabel(containerId));
   }
-  function billingSectionHtml(key, titleHtml, subHtml, actionHtml, bodyHtml) {
+  function billingSectionHtml(key, titleHtml, subHtml, actionHtml, bodyHtml, pendingCount) {
     var collapsed = !!ui.billingCollapsed[key];
     return '<div class="panel">' +
+      (pendingCount ? '<div class="panel-pending-badge" title="' + pendingCount + ' not yet done">' + pendingCount + "</div>" : "") +
       '<div class="panel-head" data-act="bill-section-toggle" data-key="' + key + '" style="cursor:pointer">' +
       '<div><h3>' + titleHtml + ' <span style="color:var(--muted);font-weight:500;font-size:12px">' + (collapsed ? "\u25B8 Show" : "\u25BE Hide") + "</span></h3>" +
       (subHtml ? '<p class="panel-sub">' + subHtml + "</p>" : "") +
@@ -1731,8 +1733,15 @@
     }).join("");
     if (!roster.length) rosterRows = '<tr><td colspan="7" class="empty-row">No rentals are flagged as on-recurring yet.</td></tr>';
 
+    var newPendingCount = newList.filter(function (r) { return !invoiceExists(r.id, "initial", null); }).length;
+    var pickupPendingCount = retList.filter(function (r) { return !state.invoices.some(function (i) { return i.rentalId === r.id && i.kind === "pickup"; }); }).length;
+    var creditPendingCount = retList.filter(function (r) { return !state.invoices.some(function (i) { return i.rentalId === r.id && i.kind === "credit"; }); }).length;
+    var removedPendingCount = retList.filter(function (r) { return r.addedToRecurring; }).length;
+    var needsRecurringPendingCount = pendingList.filter(function (r) { return needsRecurringActionable(r, ym); }).length;
+    var rosterPendingCount = roster.filter(function (r) { return !state.invoices.some(function (i) { return i.rentalId === r.id && i.kind === "recurring" && i.periodMonth === ym; }); }).length;
+
     v.innerHTML =
-      '<div class="pagehead"><div><h2>Billing</h2><div class="sub">The same four steps as your monthly close — new rentals, returns, recurring setup, and the standing roster</div></div>' +
+      '<div class="pagehead"><div><h2>Billing</h2><div class="sub">Your monthly close, in order — new rentals, pick-up fee billing, removed from recurring, needs to be added to recurring, return credit, and the recurring roster</div></div>' +
       '<div class="fld" style="min-width:180px"><label>Closing month</label><input class="in" id="bill-month" type="month" value="' + ym + '"></div></div>' +
 
       billingSectionHtml("new",
@@ -1740,37 +1749,43 @@
         "First invoice = service fee + full month + proration to the next calendar boundary.",
         (newList.some(function (r) { return !invoiceExists(r.id, "initial", null); }) ? '<button class="btn primary sm" data-act="bill-new-all">Mark all done</button>' : ""),
         '<div class="formula" style="margin-bottom:10px">proration = (monthly rate ÷ days in ' + monthLabel(ym) + ') × (days in month − delivery day)</div>' +
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Total</th><th>PO</th><th>Size</th><th>Cost of rental</th><th>Cost of set up</th><th>Cost of prorate</th><th>Rental #</th><th>Container #</th><th>Ship to / address</th><th>Delivered</th><th></th></tr></thead><tbody>' + newRows + "</tbody></table></div>") +
+        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Total</th><th>PO</th><th>Size</th><th>Cost of rental</th><th>Cost of set up</th><th>Cost of prorate</th><th>Rental #</th><th>Container #</th><th>Ship to / address</th><th>Delivered</th><th></th></tr></thead><tbody>' + newRows + "</tbody></table></div>",
+        newPendingCount) +
 
       billingSectionHtml("pickup",
-        '<span class="stage-badge">2a</span>&nbsp; Pickup fee billing — ' + monthLabel(ym),
+        '<span class="stage-badge">2</span>&nbsp; Pick-up fee billing — ' + monthLabel(ym),
         "Bill the customer the pickup fee for each container returned this month.",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Pickup fee</th><th></th></tr></thead><tbody>' + pickupRows + "</tbody></table></div>") +
-
-      billingSectionHtml("credit",
-        '<span class="stage-badge">2b</span>&nbsp; Return credit — ' + monthLabel(ym),
-        "Prorated credit for the unused portion of the month, off the originally requested return date.",
-        "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Credit</th><th></th></tr></thead><tbody>' + creditRows + "</tbody></table></div>") +
+        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Pickup fee</th><th></th></tr></thead><tbody>' + pickupRows + "</tbody></table></div>",
+        pickupPendingCount) +
 
       billingSectionHtml("removed",
-        '<span class="stage-badge">2c</span>&nbsp; Removed from recurring — ' + monthLabel(ym),
+        '<span class="stage-badge">3</span>&nbsp; Removed from recurring — ' + monthLabel(ym),
         "Take each returned container off the standing recurring roster.",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Rate</th><th></th></tr></thead><tbody>' + removedRows + "</tbody></table></div>") +
+        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Rate</th><th></th></tr></thead><tbody>' + removedRows + "</tbody></table></div>",
+        removedPendingCount) +
 
       billingSectionHtml("needs-recurring",
-        '<span class="stage-badge">3</span>&nbsp; Needs to be added to recurring',
+        '<span class="stage-badge">4</span>&nbsp; Needs to be added to recurring',
         "Rentals delivered in " + monthLabel(prevMonthKey(ym)) + " that haven't been returned, plus anything older still not flagged. Once marked, it stays here for confirmation but won't bill on the recurring roster until " + monthLabel(nextMonthKey(ym)) + ".",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Customer</th><th>Delivered</th><th>Age</th><th>Rate/mo</th><th></th></tr></thead><tbody>' + pendingRows + "</tbody></table></div>") +
+        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Customer</th><th>Delivered</th><th>Age</th><th>Rate/mo</th><th></th></tr></thead><tbody>' + pendingRows + "</tbody></table></div>",
+        needsRecurringPendingCount) +
+
+      billingSectionHtml("credit",
+        '<span class="stage-badge">5</span>&nbsp; Return credit — ' + monthLabel(ym),
+        "Prorated credit for the unused portion of the month, off the originally requested return date.",
+        "",
+        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Credit</th><th></th></tr></thead><tbody>' + creditRows + "</tbody></table></div>",
+        creditPendingCount) +
 
       billingSectionHtml("roster",
-        '<span class="stage-badge">4</span>&nbsp; Recurring roster',
+        '<span class="stage-badge">6</span>&nbsp; Recurring roster',
         roster.length + " rentals on the accounting system's auto-bill. Generates a flat monthly invoice per unit for " + monthLabel(ym) + ".",
         '<button class="btn primary sm" data-act="bill-recurring-generate">Generate recurring invoices</button>',
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Size</th><th>Monthly rent</th><th>Container #</th><th>Ship to address</th><th>Delivered</th><th></th></tr></thead><tbody>' + rosterRows + "</tbody></table></div>");
+        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Size</th><th>Monthly rent</th><th>Container #</th><th>Ship to address</th><th>Delivered</th><th></th></tr></thead><tbody>' + rosterRows + "</tbody></table></div>",
+        rosterPendingCount);
   }
 
   /* --------------------------- collections --------------------------- */
