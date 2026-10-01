@@ -76,6 +76,9 @@
   table.tbl { width:100%; border-collapse:collapse; font-size:13px; }
   .tbl th { text-align:left; padding:10px 12px; background:#d7ded2; color:var(--ink); font-size:11px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap; position:sticky; top:0; z-index:2; box-shadow:0 2px 4px rgba(0,0,0,.1); }
   .tbl td { padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .tbl-newrentals { table-layout:fixed; width:100%; }
+  .tbl-newrentals th { white-space:normal; padding:8px 6px; font-size:10px; line-height:1.3; }
+  .tbl-newrentals td { padding:8px 6px; word-wrap:break-word; overflow-wrap:break-word; }
   .tbl tr:last-child td { border-bottom:0; }
   .tbl tbody tr:hover td { background:var(--surface-2); }
   .tbl tbody tr.row-done td { background:var(--ok-bg); }
@@ -1650,7 +1653,7 @@
         "<td style=\"font-weight:600\">" + (esc(r.rentalNumber) || "—") + "</td>" +
         "<td>" + billingContainerCell(r.containerId) + "</td>" +
         "<td>" + (esc(r.shipToAddress) || "—") + "</td>" +
-        '<td class="num">' + fmtDate(r.startDate) + "</td>" +
+        '<td class="num" style="white-space:nowrap">' + fmtDate(r.startDate) + "</td>" +
         "<td>" + actionBtn + "</td></tr>" +
         (ui.billingExpandRentalId === r.id ? billingCustomerExpandRowHtml(r.customerId) : "");
     }).join("");
@@ -1749,7 +1752,9 @@
         "First invoice = service fee + full month + proration to the next calendar boundary.",
         (newList.some(function (r) { return !invoiceExists(r.id, "initial", null); }) ? '<button class="btn primary sm" data-act="bill-new-all">Mark all done</button>' : ""),
         '<div class="formula" style="margin-bottom:10px">proration = (monthly rate ÷ days in ' + monthLabel(ym) + ') × (days in month − delivery day)</div>' +
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Total</th><th>PO</th><th>Size</th><th>Cost of rental</th><th>Cost of set up</th><th>Cost of prorate</th><th>Rental #</th><th>Container #</th><th>Ship to / address</th><th>Delivered</th><th></th></tr></thead><tbody>' + newRows + "</tbody></table></div>",
+        '<div class="tablewrap"><table class="tbl tbl-newrentals" id="new-rentals-table">' +
+        '<colgroup><col style="width:14%"><col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:5%"><col style="width:7%"><col style="width:14%"><col style="width:9%"><col style="width:6%"></colgroup>' +
+        '<thead><tr><th>Customer</th><th>Total</th><th>PO</th><th>Size</th><th>Cost of rental</th><th>Cost of set up</th><th>Cost of prorate</th><th>Rental #</th><th>Container #</th><th>Ship to / address</th><th>Delivered</th><th></th></tr></thead><tbody>' + newRows + "</tbody></table></div>",
         newPendingCount) +
 
       billingSectionHtml("pickup",
