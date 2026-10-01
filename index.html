@@ -71,10 +71,10 @@
   .btn.sm { padding:5px 9px; font-size:12px; }
   .btn:disabled { opacity:.5; cursor:not-allowed; }
 
-  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  .tablewrap { border:1px solid var(--line); border-radius:10px; background:#fff; }
   table.tbl { width:100%; border-collapse:collapse; font-size:13px; }
-  .tbl th { text-align:left; padding:10px 12px; background:var(--surface-2); color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; font-weight:650; border-bottom:1px solid var(--line); white-space:nowrap; }
-  .tbl td { padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .tbl th { text-align:left; padding:10px 12px; background:var(--surface-2); color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; font-weight:650; border-bottom:1px solid var(--line); white-space:nowrap; position:sticky; top:0; z-index:2; }
+  .tbl td { padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
   .tbl tr:last-child td { border-bottom:0; }
   .tbl tbody tr:hover td { background:var(--surface-2); }
   .tbl tbody tr.row-done td { background:var(--ok-bg); }
@@ -1626,8 +1626,8 @@
         '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
         '<td class="num">' + money(r.serviceFee || 0, 0) + "</td>" +
         '<td class="num">' + money(prorate, 0) + "</td>" +
-        '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
-        "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
+        "<td style=\"font-weight:600\">" + (esc(r.rentalNumber) || "—") + "</td>" +
+        "<td>" + billingContainerCell(r.containerId) + "</td>" +
         "<td>" + (esc(r.poNumber) || "—") + "</td>" +
         "<td>" + (esc(r.shipToAddress) || "—") + "</td>" +
         '<td class="num">' + fmtDate(r.startDate) + "</td>" +
@@ -1721,7 +1721,7 @@
       '<div class="panel"><div class="panel-head"><div><h3><span class="stage-badge">1</span>&nbsp; New rentals — ' + monthLabel(ym) + '</h3><p class="panel-sub">First invoice = service fee + full month + proration to the next calendar boundary.</p></div>' +
       (newList.some(function(r){return !invoiceExists(r.id,"initial",null);}) ? '<button class="btn primary sm" data-act="bill-new-all">Mark all done</button>' : "") + "</div>" +
       '<div class="formula" style="margin-bottom:10px">proration = (monthly rate ÷ days in ' + monthLabel(ym) + ') × (days in month − delivery day)</div>' +
-      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Size</th><th>Cost of rental</th><th>Cost of set up</th><th>Cost of prorate</th><th>Container #</th><th>Rental #</th><th>PO</th><th>Ship to / address</th><th>Delivered</th><th>Total</th><th></th></tr></thead><tbody>' + newRows + "</tbody></table></div></div>" +
+      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Size</th><th>Cost of rental</th><th>Cost of set up</th><th>Cost of prorate</th><th>Rental #</th><th>Container #</th><th>PO</th><th>Ship to / address</th><th>Delivered</th><th>Total</th><th></th></tr></thead><tbody>' + newRows + "</tbody></table></div></div>" +
 
       '<div class="panel"><h3><span class="stage-badge">2a</span>&nbsp; Pickup fee billing — ' + monthLabel(ym) + '</h3><p class="panel-sub">Bill the customer the pickup fee for each container returned this month.</p>' +
       '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Pickup fee</th><th></th></tr></thead><tbody>' + pickupRows + "</tbody></table></div></div>" +
