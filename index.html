@@ -815,7 +815,7 @@
   /* =====================================================================
      RENDER
   ===================================================================== */
-  function render() {
+  function renderInner() {
     if (AUTH.state === "logged-in" && AUTH.role === "driver") {
       renderAuthBar();
       renderDriverView();
@@ -858,6 +858,11 @@
     v.insertAdjacentHTML("beforeend",
       '<div style="margin-top:28px;display:flex;justify-content:flex-end">' +
       '<button class="btn ghost sm muted" data-act="reset-all">Reset all data</button></div>');
+  }
+  function render() {
+    var scrollY = window.scrollY;
+    renderInner();
+    window.scrollTo(0, scrollY);
   }
 
   /* --------------------------- dashboard --------------------------- */
