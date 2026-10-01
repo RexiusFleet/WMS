@@ -1660,8 +1660,8 @@
     var pickupRows = retList.map(function (r) {
       var pickupInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "pickup"; });
       var billedLocked = pickupInv && pickupInv.status === "paid";
-      var billedBtn = '<button class="btn sm ' + (billedLocked ? "ghost" : (pickupInv ? "primary" : "ghost")) + '" data-act="bill-return-billed" data-id="' + esc(r.id) + '">' + (billedLocked ? "Billed — locked" : pickupInv ? "Billed — undo" : "Mark billed") + "</button>";
-      return "<tr>" +
+      var billedBtn = '<button class="btn sm ' + (billedLocked ? "ghost" : (pickupInv ? "danger" : "primary")) + '" data-act="bill-return-billed" data-id="' + esc(r.id) + '">' + (billedLocked ? "Billed — locked" : pickupInv ? "Billed — undo" : "Mark billed") + "</button>";
+      return '<tr class="' + (pickupInv ? "row-done" : "") + '">' +
         '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
         "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
         "<td>" + customerCellHtml(r.customerId) + "</td>" +
@@ -1674,8 +1674,8 @@
     var creditRows = retList.map(function (r) {
       var creditInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "credit"; });
       var credit = returnProrateCredit(r.monthlyRate, r.endDate);
-      var creditBtn = '<button class="btn sm ' + (creditInv ? "primary" : "ghost") + '" data-act="bill-return-credit" data-id="' + esc(r.id) + '">' + (creditInv ? "Credit issued — undo" : "Issue credit") + "</button>";
-      return "<tr>" +
+      var creditBtn = '<button class="btn sm ' + (creditInv ? "danger" : "primary") + '" data-act="bill-return-credit" data-id="' + esc(r.id) + '">' + (creditInv ? "Credit issued — undo" : "Issue credit") + "</button>";
+      return '<tr class="' + (creditInv ? "row-done" : "") + '">' +
         '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
         "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
         "<td>" + customerCellHtml(r.customerId) + "</td>" +
@@ -1687,8 +1687,8 @@
 
     var removedRows = retList.map(function (r) {
       var removed = !r.addedToRecurring;
-      var removedBtn = '<button class="btn sm ' + (removed ? "primary" : "ghost") + '" data-act="bill-return-removed" data-id="' + esc(r.id) + '">' + (removed ? "Removed — undo" : "Remove from recurring") + "</button>";
-      return "<tr>" +
+      var removedBtn = '<button class="btn sm ' + (removed ? "danger" : "primary") + '" data-act="bill-return-removed" data-id="' + esc(r.id) + '">' + (removed ? "Removed — undo" : "Remove from recurring") + "</button>";
+      return '<tr class="' + (removed ? "row-done" : "") + '">' +
         '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
         "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
         "<td>" + customerCellHtml(r.customerId) + "</td>" +
@@ -1705,7 +1705,7 @@
       var actionBtn = done
         ? '<button class="btn sm ghost" data-act="bill-mark-recurring" data-id="' + esc(r.id) + '">Done — undo</button>'
         : '<button class="btn sm primary" data-act="bill-mark-recurring" data-id="' + esc(r.id) + '">Mark added to recurring</button>';
-      return "<tr>" +
+      return '<tr class="' + (done ? "row-done" : "") + '">' +
         '<td class="cid">' + esc(containerLabel(r.containerId)) + "</td>" +
         "<td>" + customerCellHtml(r.customerId) + "</td>" +
         '<td class="num">' + fmtDate(r.startDate) + "</td>" +
@@ -1722,7 +1722,7 @@
       var actionBtn = existingInv
         ? '<button class="btn sm ' + (existingInv.status === "paid" ? "ghost" : "danger") + '" data-act="bill-recurring-toggle" data-id="' + esc(r.id) + '">' + (existingInv.status === "paid" ? "Paid — locked" : "Undo") + "</button>"
         : '<button class="btn sm primary" data-act="bill-recurring-toggle" data-id="' + esc(r.id) + '">Bill</button>';
-      return "<tr>" +
+      return '<tr class="' + (existingInv ? "row-done" : "") + '">' +
         "<td>" + customerCellHtml(r.customerId) + "</td>" +
         "<td>" + esc(cont ? cont.type : "—") + "</td>" +
         '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
