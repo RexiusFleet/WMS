@@ -78,6 +78,7 @@
   .qf-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
   @media (max-width:900px){ .qf-grid { grid-template-columns:1fr; } }
   .row-hard td:first-child { box-shadow:inset 3px 0 0 #c0392b; }
+  .queue-over { outline:2px dashed var(--primary-2); outline-offset:-2px; background:#f1f7ef; }
   .pill-asap { color:#b3261e; }
   .qgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:12px; }
   .qcard { border:1px solid var(--line); border-radius:10px; padding:12px; background:#fff; display:grid; gap:8px; cursor:grab; align-content:start; }
@@ -174,11 +175,11 @@
   .dispatch-cal { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
   .dispatch-cal.wk5 { grid-template-columns:repeat(5,1fr); }
   .dcal-dow { font-size:11px; font-weight:650; color:var(--muted); text-align:center; padding:4px 0; text-transform:uppercase; }
-  .dcal-day { min-height:88px; border:1px solid var(--line); border-radius:8px; padding:5px; background:#fff; overflow:hidden; }
+  .dcal-day { min-height:88px; border:1px solid var(--line); border-radius:8px; padding:5px; background:#fff; overflow:visible; min-width:0; }
   .dcal-day.dcal-empty { background:transparent; border-color:transparent; }
   .dcal-day.dcal-today { border-color:var(--primary); border-width:2px; }
   .dcal-daynum { font-size:11px; color:var(--muted); font-weight:650; margin-bottom:3px; }
-  .dcard { font-size:11px; padding:2px 6px; border-radius:5px; margin-bottom:3px; cursor:pointer; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dcard { font-size:11.5px; padding:3px 6px; border-radius:5px; margin-bottom:3px; cursor:pointer; font-weight:650; white-space:normal; overflow:visible; word-break:break-word; line-height:1.3; }
   .dcard-rental-delivery { background:var(--ok-bg); color:var(--ok); }
   .dcard-rental-return { background:var(--danger-bg); color:var(--danger); }
   .dcard-sales { background:var(--rent-bg); color:var(--rent); }
@@ -3550,7 +3551,7 @@
     v.innerHTML =
       '<div class="pagehead"><div><h2>Dispatch</h2><div class="sub">Approved jobs, scheduled onto drivers and dates</div></div>' +
       '<button class="btn primary" data-act="quote-add">+ New quote</button></div>' +
-      '<div class="panel"><h3>Needs scheduling<span class="count" id="dispatch-queue-count"></span></h3>' +
+      '<div class="panel" id="dispatch-queue-panel"><h3>Needs scheduling<span class="count" id="dispatch-queue-count"></span></h3>' +
       '<p class="panel-sub">Approved jobs that still need a driver and a date. Click Schedule to add one to a driver\u2019s schedule, or drag a card onto a driver\u2019s day below.</p>' +
       '<div id="dispatch-queue-table"></div></div>' +
       '<div class="panel"><div class="panel-head"><div><h3>Calendar</h3><p class="panel-sub">Click a card to reassign it, reschedule it, or release it to a driver. Drag a card to move or reorder it.</p></div></div>' +
@@ -3847,7 +3848,7 @@
     if (!queue.length) rows = '<tr><td colspan="7" class="empty-row">Nothing waiting — every approved job is on a driver’s schedule.</td></tr>';
     el("dispatch-queue-table").innerHTML =
       '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Category</th><th>Size</th><th>Delivery address</th><th>Requested delivery date</th><th>Delivery date notes</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
-      (queue.length ? '<div class="muted" style="font-size:12px;margin-top:8px">Drag a row onto a driver’s day in the calendar below to schedule it — or click Schedule.</div>' : "");
+      (queue.length ? '<div class="muted" style="font-size:12px;margin-top:8px">Drag a row onto a driver’s day in the calendar below to schedule it — or click Schedule. Drag a scheduled job from the calendar back up here to unschedule it.</div>' : '<div class="muted" style="font-size:12px;margin-top:8px">Drag a scheduled job from the calendar back up here to unschedule it.</div>');
   }
   function dispatchWeekRange(dateIso) {
     var pd = parts(dateIso);
@@ -4142,6 +4143,15 @@
     state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === id ? Object.assign({}, c, patch) : c; });
     closeModal();
     flash(date && driver ? "Scheduled for " + fmtDate(date) + " \u2014 " + driver : date ? "Date saved \u2014 still needs a driver, so it stays in Needs scheduling" : "Moved to Needs scheduling");
+    commit();
+  }
+  function dispatchSendBackToQueue(cardId) {
+    var card = dispatchCardById(cardId);
+    if (!card) return;
+    if (card.driverConfirmed || card.dispatcherConfirmed) return flash("That job is already completed \u2014 it can't go back to the queue.", true);
+    if (!card.scheduledDate || !card.driver) return;
+    state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === cardId ? Object.assign({}, c, { scheduledDate: "", driver: "", released: false }) : c; });
+    flash("Moved back to Needs scheduling");
     commit();
   }
   function dispatchMoveToQueue(id) {
@@ -4567,20 +4577,26 @@
     Array.prototype.forEach.call(document.querySelectorAll(".dcal-day-over"), function (el2) { el2.classList.remove("dcal-day-over"); });
   });
   document.addEventListener("dragover", function (e) {
-    if (e.target.closest("[data-date]") || e.target.closest(".drag-card")) e.preventDefault();
+    if (e.target.closest("[data-date]") || e.target.closest(".drag-card") || e.target.closest("#dispatch-queue-panel")) e.preventDefault();
   });
   document.addEventListener("dragenter", function (e) {
     var day = e.target.closest("[data-date]");
     if (day) day.classList.add("dcal-day-over");
+    var qp = e.target.closest("#dispatch-queue-panel");
+    if (qp) qp.classList.add("queue-over");
   });
   document.addEventListener("dragleave", function (e) {
     var day = e.target.closest("[data-date]");
     if (day && !day.contains(e.relatedTarget)) day.classList.remove("dcal-day-over");
+    var qp = e.target.closest("#dispatch-queue-panel");
+    if (qp && !qp.contains(e.relatedTarget)) qp.classList.remove("queue-over");
   });
   document.addEventListener("drop", function (e) {
     var draggedId = e.dataTransfer.getData("text/plain");
     Array.prototype.forEach.call(document.querySelectorAll(".dcal-day-over"), function (el2) { el2.classList.remove("dcal-day-over"); });
+    Array.prototype.forEach.call(document.querySelectorAll(".queue-over"), function (el2) { el2.classList.remove("queue-over"); });
     if (!draggedId) return;
+    if (e.target.closest("#dispatch-queue-panel")) { e.preventDefault(); dispatchSendBackToQueue(draggedId); return; }
     var targetCard = e.target.closest(".drag-card");
     var targetDay = e.target.closest("[data-date]");
     if (targetCard && targetCard.getAttribute("data-id") !== draggedId) {
