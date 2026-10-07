@@ -72,6 +72,11 @@
   .btn.sm { padding:5px 9px; font-size:12px; }
   .btn:disabled { opacity:.5; cursor:not-allowed; }
 
+  .qf-grid { display:grid; grid-template-columns:minmax(300px,1fr) minmax(0,1.7fr); gap:20px; align-items:start; }
+  .qf-col { padding:18px; display:grid; gap:14px; }
+  .qf-h { margin:0; font-size:15px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .qf-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+  @media (max-width:900px){ .qf-grid { grid-template-columns:1fr; } }
   .csec { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:#f7f9f5; display:grid; gap:10px; }
   .csec-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .csec-actions { display:flex; gap:8px; flex-wrap:wrap; }
@@ -193,6 +198,7 @@
       <button data-act="tab" data-tab="collections">Collections</button>
       <button data-act="tab" data-tab="haul">Contract Haul</button>
       <button data-act="tab" data-tab="sales-inv">Sales Inventory</button>
+      <button data-act="tab" data-tab="new-quote">New Quote</button>
       <button data-act="tab" data-tab="quotes">Quotes</button>
       <button data-act="tab" data-tab="dispatch">Dispatch</button>
       <button data-act="tab" data-tab="sales-billing">Sales Billing</button>
@@ -249,7 +255,7 @@
 
   /* ------------------------- state ------------------------- */
   var state = { containers: [], customers: [], rentals: [], invoices: [], collections: [], hauls: [], salescontainers: [], quotes: [], dispatchcards: [], profiles: [], salesinvoices: [], ratecards: [] };
-  var VALID_TABS = ["dashboard", "fleet", "customers", "rentals", "billing", "collections", "haul", "sales-inv", "quotes", "dispatch", "sales-billing", "completed-jobs", "rate-card", "driver-access"];
+  var VALID_TABS = ["dashboard", "fleet", "customers", "rentals", "billing", "collections", "haul", "sales-inv", "new-quote", "quotes", "dispatch", "sales-billing", "completed-jobs", "rate-card", "driver-access"];
   function lastTabOrDefault() {
     try {
       var saved = window.localStorage.getItem("wms-tracker-last-tab");
@@ -863,6 +869,7 @@
     else if (ui.tab === "collections") renderCollections(v);
     else if (ui.tab === "haul") renderHaul(v);
     else if (ui.tab === "sales-inv") renderSalesInv(v);
+    else if (ui.tab === "new-quote") renderNewQuote(v);
     else if (ui.tab === "quotes") renderQuotes(v);
     else if (ui.tab === "dispatch") renderDispatch(v);
     else if (ui.tab === "sales-billing") renderSalesBilling(v);
@@ -2415,7 +2422,8 @@
   }
   var QUOTE_LINE_ITEMS = [];
   var QUOTE_CONTACTS = [];
-  function quoteModal(editing) {
+  var QF_NODE = null, QF_PARTS = null;
+  function quoteModal(editing, buildOnly) {
     CURRENT_QUOTE_EDIT_ID = editing ? editing.id : null;
     if (!editing) { QUOTE_LINE_ITEMS = []; QUOTE_LINE_ITEM_EDIT_INDEX = null; QUOTE_CONTACTS = []; }
     else { QUOTE_CONTACTS = (editing.contacts || []).slice(); }
@@ -2431,13 +2439,16 @@
     var readOnly = editing && editing.status === "Declined";
     var dis = readOnly ? " disabled" : "";
     var siblings = editing ? quoteSiblings(editing) : [];
-    openModal(editing ? "Edit quote " + esc(q.quoteNumber) : "New quote",
+    var pA = (
       (siblings.length
         ? '<div class="banner" style="margin-bottom:0">Part of a ' + (siblings.length + 1) + '-item request — <a href="#" data-act="quote-batch-view" data-batch="' + esc(editing.batchId) + '" data-id="' + esc(editing.id) + '" style="color:var(--primary-2);font-weight:600">view all items together</a></div>'
         : "") +
-      (editing ? '<div class="fld"><label>Status</label><select class="in" id="q-status">' + opt(QUOTE_STATUSES, q.status) + "</select></div>" : "") +
-      '<div class="fld"><label>Category</label><select class="in" id="q-category"' + dis + '>' + opt(QUOTE_CATEGORIES, q.category) + "</select></div>" +
-
+      (editing ? '<div class="fld"><label>Status</label><select class="in" id="q-status">' + opt(QUOTE_STATUSES, q.status) + "</select></div>" : "")
+    );
+    var pB = (
+      '<div class="fld"><label>Category</label><select class="in" id="q-category"' + dis + '>' + opt(QUOTE_CATEGORIES, q.category) + "</select></div>"
+    );
+    var pC = (
       '<div class="fld"><label>Customer</label>' +
       '<div class="combo-wrap"><input class="in" id="q-cust-search" autocomplete="off" placeholder="Search customer name or account #…" value="' + esc(q.customerName || "") + '"' + dis + '>' +
       '<input type="hidden" id="q-customer" value="' + esc(q.customerId || "") + '"><div class="combo-list" id="q-cust-list"></div></div>' +
@@ -2447,8 +2458,9 @@
         '<input class="in mono" id="q-newcust-account" placeholder="Account # (optional)">' +
         '<button type="button" class="btn sm primary" data-act="quote-newcust-create">Create &amp; select</button></div>') +
       "</div>" +
-      '<div class="fld"><label>Email</label><input class="in" id="q-email" value="' + esc(q.email || "") + '"' + dis + '></div>' +
-
+      '<div class="fld"><label>Email</label><input class="in" id="q-email" value="' + esc(q.email || "") + '"' + dis + '></div>'
+    );
+    var pD = (
       (editing ? "" : '<div class="fld" id="q-lineitems-wrap" style="display:none"><label>Line items added</label><div id="q-lineitems-list" class="list"></div></div>') +
 
       (editing ? "" : '<div class="quote-group" id="q-rental-sections-wrap" style="display:none">' +
@@ -2503,13 +2515,17 @@
       '<div class="fld" id="q-shipto-shared-wrap"><label>Ship-to / delivery address</label><div class="combo-wrap"><input class="in addr-input" id="q-shipto" value="' + esc(q.shipToAddress) + '"' + dis + '><div class="combo-list" id="q-shipto-list"></div></div><div class="subline" id="q-shipto-hint" style="color:var(--warn)"></div></div>' +
       (editing ? "" : '<div class="fld" id="q-sameaddr-wrap" style="display:none;margin-top:-6px">' +
         '<label style="display:flex;align-items:center;gap:6px;font-weight:500;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">' +
-        '<input type="checkbox" id="q-sameaddr-check" style="width:auto"> Use the same address as line item 1</label></div>') +
+        '<input type="checkbox" id="q-sameaddr-check" style="width:auto"> Use the same address as line item 1</label></div>')
+    );
+    var pE = (
       '<div class="fld"><label>Contacts</label>' +
       '<div class="quickadd" id="q-contacts-wrap" style="display:none"><div id="q-contacts-list" class="list"></div></div>' +
       '<div class="row2"><input class="in" id="q-contact-name" placeholder="Name"' + dis + '><input class="in" id="q-contact-phone" placeholder="Phone"' + dis + "></div>" +
       '<input class="in" id="q-contact-type" placeholder="Contact type (e.g. Site contact, Billing)" style="margin-top:8px"' + dis + ">" +
       (readOnly ? "" : '<button type="button" class="btn sm ghost" style="margin-top:6px" data-act="quote-contact-add">+ Add contact</button>') +
-      "</div>" +
+      "</div>"
+    );
+    var pF = (
       '<div class="row2"><div class="fld"><label>Payment method</label><input class="in" id="q-payment-method" value="' + esc(q.paymentMethod || "") + '"' + dis + "></div>" +
       '<div class="fld" id="q-door-fld"><label>Door orientation</label><select class="in" id="q-door-orientation"' + dis + '>' + opt([""].concat(DOOR_ORIENTATIONS), q.doorOrientation || "") + "</select></div></div>" +
       '<div class="fld"><label>PO # (optional)</label><input class="in" id="q-po" value="' + esc(q.poNumber) + '"' + dis + "></div>" +
@@ -2517,18 +2533,58 @@
       (editing ? "" : '<div class="fld" id="q-add-row"><label>Add this container' + '</label><div style="display:flex;gap:8px;align-items:center">' +
         '<input class="in mono" id="q-lineitem-qty" type="number" min="1" value="1" style="width:80px" title="Quantity">' +
         '<button type="button" class="btn sm ghost" id="q-lineitem-add-btn" data-act="quote-lineitem-add" style="flex:1">+ Add to quote</button></div>' +
-        '<div class="muted" style="font-size:12px;margin-top:4px">Set a quantity to add several identical containers at once. Each becomes its own dispatch job — edit any single one afterward if it needs a different date or detail.</div></div>'),
+        '<div class="muted" style="font-size:12px;margin-top:4px">Set a quantity to add several identical containers at once. Each becomes its own dispatch job — edit any single one afterward if it needs a different date or detail.</div></div>')
+    );
+    var footHtml = (
       '<button class="btn" data-act="modal-close">Cancel</button>' +
       (editing
         ? '<button class="btn primary" data-act="quote-save" data-id="' + esc(editing.id) + '">Save changes</button>'
         : '<button class="btn ghost" data-act="quote-save" data-approve="0">Save as draft</button>' +
-          '<button class="btn primary" data-act="quote-save" data-approve="1">Save &amp; approve — send to dispatch</button>'),
-      "large");
+          '<button class="btn primary" data-act="quote-save" data-approve="1">Save &amp; approve — send to dispatch</button>')
+    );
+    if (!editing) {
+      QF_PARTS = { left: pC + pE, right: pB + pD + pF, foot: footHtml.split('data-act="modal-close"').join('data-act="quote-form-cancel"') };
+      if (buildOnly) return;
+      QF_NODE = null;
+      ui.tab = "new-quote";
+      try { window.localStorage.setItem("wms-tracker-last-tab", ui.tab); } catch (e) {}
+      closeModal(); render();
+      return;
+    }
+    openModal("Edit quote " + esc(q.quoteNumber), pA + pB + pC + pD + pE + pF, footHtml, "large");
     if (!editing) { QS_SEQ = 0; quoteAddSection(false); }
     quoteShowGroup(q.category);
     if (!editing) renderQuoteLineItemsList();
     renderQuoteContactsList();
     updateSalesSpecMatchInfo();
+  }
+  function quoteFormDone() {
+    closeModal();
+    QF_NODE = null; QF_PARTS = null;
+    ui.tab = "quotes";
+    try { window.localStorage.setItem("wms-tracker-last-tab", ui.tab); } catch (e) {}
+  }
+  function renderNewQuote(v) {
+    var fresh = false;
+    if (!QF_NODE) {
+      quoteModal(null, true);
+      QF_NODE = document.createElement("div");
+      QF_NODE.innerHTML =
+        '<div class="pagehead"><div><h2>New quote</h2><div class="sub">Customer on the left &middot; container / job details on the right</div></div></div>' +
+        '<div class="qf-grid"><div class="card qf-col"><h3 class="qf-h">Customer</h3>' + QF_PARTS.left + '</div>' +
+        '<div class="card qf-col"><h3 class="qf-h">Container / job</h3>' + QF_PARTS.right + '</div></div>' +
+        '<div class="qf-foot">' + QF_PARTS.foot + '</div>';
+      fresh = true;
+    }
+    v.innerHTML = "";
+    v.appendChild(QF_NODE);
+    if (fresh) {
+      QS_SEQ = 0; quoteAddSection(false);
+      quoteShowGroup(el("q-category").value);
+      renderQuoteLineItemsList();
+      renderQuoteContactsList();
+      updateSalesSpecMatchInfo();
+    }
   }
   function quoteShowGroup(cat) {
     ["rental", "sales", "haul"].forEach(function (slug) {
@@ -2978,7 +3034,7 @@
       lastNumber = newObj.quoteNumber;
     });
     QUOTE_LINE_ITEMS = [];
-    closeModal();
+    quoteFormDone();
     if (autoApprove) {
       var onCalendar = scheduledCount, inQueue = createdCount - scheduledCount;
       var parts = [];
@@ -4060,6 +4116,7 @@
     "sales-save": function (t) { salesSave(t.getAttribute("data-id")); },
     "sales-filter": function (t) { ui.salesFilter = t.getAttribute("data-filter"); render(); },
     "quote-add": function () { quoteModal(null); },
+    "quote-form-cancel": function () { quoteFormDone(); render(); },
     "quote-edit": function (t) { quoteModal(quoteById(t.getAttribute("data-id"))); },
     "quote-approve": function (t) { quoteApprove(t.getAttribute("data-id")); },
     "quote-decline": function (t) { quoteDecline(t.getAttribute("data-id")); },
