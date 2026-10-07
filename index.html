@@ -295,7 +295,7 @@
     haulQ: "", haulFilter: "all",
     salesQ: "", salesFilter: "all",
     quoteQ: "", quoteCatFilter: "all", quoteStatusFilter: "all",
-    dispatchViewMode: "month", dispatchRefDate: today(), dispatchDriverFilter: "all",
+    dispatchViewMode: "month", dispatchRefDate: today(), dispatchDriverFilter: DRIVERS[0],
     salesBillQ: "", salesBillFilter: "all",
     completedJobsQ: "", completedJobsCatFilter: "all"
   };
@@ -3982,7 +3982,8 @@
       var iso = y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
       var pills = (byDay[iso] || []).map(dispatchCardPillHtml).join("");
       var cls = "dcal-day" + (iso === today() ? " dcal-today" : "");
-      cells.push('<div class="' + cls + '" data-date="' + iso + '"><div class="dcal-daynum">' + d + "</div>" + pills + "</div>");
+      var drvAttr = (DRIVERS.indexOf(ui.dispatchDriverFilter) !== -1) ? ' data-driver="' + esc(ui.dispatchDriverFilter) + '"' : "";
+      cells.push('<div class="' + cls + '" data-date="' + iso + '"' + drvAttr + '><div class="dcal-daynum">' + d + "</div>" + pills + "</div>");
     }
     el("dispatch-calendar").innerHTML = '<div class="dispatch-cal wk5">' + cells.join("") + "</div>";
   }
@@ -4149,6 +4150,15 @@
     flash("Moved back to the queue");
     commit();
   }
+  function dispatchAskDriver(card, dateIso, preselect) {
+    openModal("Which driver? \u2014 " + esc(card.customerName),
+      '<div class="formula">' + esc(card.category) + " \u00B7 " + esc(dispatchCardSummary(card)) + "</div>" +
+      '<div>Which driver are you assigning this to for <strong>' + esc(weekdayLabel(dateIso) + " " + fmtDate(dateIso)) + "</strong>?</div>" +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">' + DRIVERS.map(function (d) {
+        return '<button class="btn ' + (d === preselect ? "primary" : "") + '" data-act="dispatch-assign-driver" data-id="' + esc(card.id) + '" data-date="' + esc(dateIso) + '" data-driver="' + esc(d) + '">' + driverBadgeHtml(d) + esc(d) + "</button>";
+      }).join("") + "</div>",
+      '<button class="btn" data-act="modal-close">Cancel</button>');
+  }
   var HARD_PENDING = null;
   function dispatchHardGuard(card, dateIso, proceed) {
     if (hardDateConflict(card.hardDate, card.requestedDate, dateIso) && card.scheduledDate !== dateIso) {
@@ -4164,6 +4174,9 @@
   function dispatchMoveCard(cardId, dateIso, driver) {
     var card = dispatchCardById(cardId);
     if (!card) return;
+    var specific = DRIVERS.indexOf(ui.dispatchDriverFilter) !== -1;
+    if (!card.driver && !driver && specific) driver = ui.dispatchDriverFilter;
+    if (!card.driver && ui.dispatchDriverFilter === "all") { dispatchAskDriver(card, dateIso, driver); return; }
     dispatchHardGuard(card, dateIso, function () { dispatchMoveCardApply(cardId, dateIso, driver); });
   }
   function dispatchMoveCardApply(cardId, dateIso, driver) {
@@ -4469,6 +4482,13 @@
     "quote-date-nextmonth": function (t) { quoteDateShiftMonth(t.getAttribute("data-field"), 1); },
     "quote-date-clear": function (t) { quoteDateClear(t.getAttribute("data-field")); },
     "quote-date-today": function (t) { quoteDateToday(t.getAttribute("data-field")); },
+    "dispatch-assign-driver": function (t) {
+      var id = t.getAttribute("data-id"), date = t.getAttribute("data-date"), drv = t.getAttribute("data-driver");
+      closeModal();
+      var card = dispatchCardById(id);
+      if (!card) return;
+      dispatchHardGuard(card, date, function () { dispatchMoveCardApply(id, date, drv); });
+    },
     "dispatch-hard-go": function () { var f = HARD_PENDING; HARD_PENDING = null; closeModal(); if (f) f(); },
     "dispatch-schedule": function (t) { dispatchCardModal(dispatchCardById(t.getAttribute("data-id"))); },
     "dispatch-manage": function (t) { dispatchCardModal(dispatchCardById(t.getAttribute("data-id"))); },
