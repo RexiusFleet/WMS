@@ -3074,6 +3074,10 @@
     QUOTE_LINE_ITEMS = [];
     quoteFormDone();
     if (autoApprove) {
+      ui.tab = "dispatch";
+      try { window.localStorage.setItem("wms-tracker-last-tab", ui.tab); } catch (e) {}
+    }
+    if (autoApprove) {
       var onCalendar = scheduledCount, inQueue = createdCount - scheduledCount;
       var parts = [];
       if (onCalendar) parts.push(onCalendar + " on the calendar");
