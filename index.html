@@ -2402,6 +2402,37 @@
     el("q-cust-list").innerHTML = html || '<div class="combo-empty">No matching customers.</div>';
     el("q-cust-list").style.display = "block";
   }
+  function renderQuoteAccountCombo(term) {
+    var t = (term || "").trim().toLowerCase();
+    var matches = state.customers.filter(function (c) {
+      return c.accountNumber && (!t || c.accountNumber.toLowerCase().indexOf(t) !== -1);
+    }).slice(0, 30);
+    el("q-cust-account-list").innerHTML = matches.map(function (c) {
+      return '<div class="combo-item" data-act="quote-cust-pick" data-id="' + esc(c.id) + '">' + esc(c.accountNumber) + " \u2014 " + esc(c.name) + "</div>";
+    }).join("") || '<div class="combo-empty">No matching account #. Keep typing to enter a new one.</div>';
+    el("q-cust-account-list").style.display = "block";
+  }
+  function quoteFillCustomer(c) {
+    el("q-customer").value = c.id;
+    el("q-cust-search").value = c.name;
+    el("q-cust-account").value = c.accountNumber || "";
+    el("q-email").value = c.email || "";
+    if (el("q-phone")) el("q-phone").value = c.phone || "";
+    el("q-cust-list").style.display = "none";
+    el("q-cust-account-list").style.display = "none";
+  }
+  function quoteSyncCustomerBlanks(custId) {
+    var c = customerById(custId);
+    if (!c) return;
+    var acct = el("q-cust-account") ? el("q-cust-account").value.trim() : "";
+    var email = el("q-email") ? el("q-email").value.trim() : "";
+    var phone = el("q-phone") ? el("q-phone").value.trim() : "";
+    var patch = {};
+    if (acct && !c.accountNumber) patch.accountNumber = acct;
+    if (email && !c.email) patch.email = email;
+    if (phone && !c.phone) patch.phone = phone;
+    if (Object.keys(patch).length) state.customers = state.customers.map(function (x) { return x.id === custId ? Object.assign({}, x, patch) : x; });
+  }
   function comboSalesContainerItems(term) {
     var t = term.trim().toLowerCase();
     var usedIds = QUOTE_LINE_ITEMS.filter(function (i) { return i.category === "Sales"; }).map(function (i) { return i.salesContainerId; });
@@ -2449,16 +2480,19 @@
       '<div class="fld"><label>Category</label><select class="in" id="q-category"' + dis + '>' + opt(QUOTE_CATEGORIES, q.category) + "</select></div>"
     );
     var pC = (
-      '<div class="fld"><label>Customer</label>' +
-      '<div class="combo-wrap"><input class="in" id="q-cust-search" autocomplete="off" placeholder="Search customer name or account #…" value="' + esc(q.customerName || "") + '"' + dis + '>' +
-      '<input type="hidden" id="q-customer" value="' + esc(q.customerId || "") + '"><div class="combo-list" id="q-cust-list"></div></div>' +
+      '<div class="fld"><label>Customer name</label>' +
+      '<div class="combo-wrap"><input class="in" id="q-cust-search" autocomplete="off" placeholder="Search or type a customer name…" value="' + esc(q.customerName || "") + '"' + dis + '>' +
+      '<input type="hidden" id="q-customer" value="' + esc(q.customerId || "") + '"><div class="combo-list" id="q-cust-list"></div></div></div>' +
+      '<div class="fld"><label>Account #</label>' +
+      '<div class="combo-wrap"><input class="in mono" id="q-cust-account" autocomplete="off" placeholder="Search or type an account #…" value="' + esc(((customerById(q.customerId) || {}).accountNumber) || "") + '"' + dis + '><div class="combo-list" id="q-cust-account-list"></div></div>' +
       (readOnly ? "" : '<button type="button" class="btn sm ghost" style="margin-top:6px" data-act="quote-newcust-toggle">+ Add new customer</button>' +
         '<div class="quickadd" id="q-newcust" style="display:none">' +
         '<input class="in" id="q-newcust-name" placeholder="Business / customer name">' +
         '<input class="in mono" id="q-newcust-account" placeholder="Account # (optional)">' +
         '<button type="button" class="btn sm primary" data-act="quote-newcust-create">Create &amp; select</button></div>') +
       "</div>" +
-      '<div class="fld"><label>Email</label><input class="in" id="q-email" value="' + esc(q.email || "") + '"' + dis + '></div>'
+      '<div class="fld"><label>Email</label><input class="in" id="q-email" value="' + esc(q.email || "") + '"' + dis + '></div>' +
+      '<div class="fld"><label>Phone</label><input class="in" id="q-phone" type="tel" value="' + esc(((customerById(q.customerId) || {}).phone) || "") + '"' + dis + '></div>'
     );
     var pD = (
       (editing ? "" : '<div class="fld" id="q-lineitems-wrap" style="display:none"><label>Line items added</label><div id="q-lineitems-list" class="list"></div></div>') +
@@ -2470,7 +2504,7 @@
       (editing ? '<div class="quote-group" id="q-group-rental">' : '<div class="quote-group" id="q-group-rental-legacy" style="display:none">') +
       '<div class="row2"><div class="fld"><label>Container type needed</label><select class="in" id="q-container-type"' + dis + '>' + opt(TYPES, q.containerType || TYPES[0]) + "</select></div>" +
       '<div class="fld"><label>Monthly rate ($)</label><input class="in mono" id="q-monthly-rate" type="number" min="0" value="' + esc(editing ? q.monthlyRate : ((rateForType(q.containerType || TYPES[0]) || {}).monthlyRate || "")) + '"' + dis + "></div></div>" +
-      '<div class="fld"><label>Delivery / service fee ($)</label><input class="in mono" id="q-service-fee" type="number" min="0" value="' + esc(editing ? q.serviceFee : ((rateForType(q.containerType || TYPES[0]) || {}).serviceFee || "")) + '"' + dis + "></div>" +
+      '<div class="fld"><label>Delivery / Pick-up fee ($)</label><input class="in mono" id="q-service-fee" type="number" min="0" value="' + esc(editing ? q.serviceFee : ((rateForType(q.containerType || TYPES[0]) || {}).serviceFee || "")) + '"' + dis + "></div>" +
       "</div>" +
 
       '<div class="quote-group" id="q-group-sales">' +
@@ -2616,7 +2650,7 @@
       '<button type="button" class="btn sm ghost danger csec-rmbtn" data-act="qsec-remove" data-n="' + n + '">Remove</button></span></div>' +
       '<div class="row2"><div class="fld">' + lab("Container type") + '<select class="in qs-type" id="qs-type-' + n + '" data-n="' + n + '">' + opt(TYPES, v.type) + "</select></div>" +
       '<div class="fld">' + lab("Monthly rate ($)") + '<input class="in mono" id="qs-rate-' + n + '" type="number" min="0" value="' + esc(v.rate) + '"></div></div>' +
-      '<div class="row2"><div class="fld">' + lab("Delivery / service fee ($)") + '<input class="in mono" id="qs-fee-' + n + '" type="number" min="0" value="' + esc(v.fee) + '"></div>' +
+      '<div class="row2"><div class="fld">' + lab("Delivery / Pick-up fee ($)") + '<input class="in mono" id="qs-fee-' + n + '" type="number" min="0" value="' + esc(v.fee) + '"></div>' +
       '<div class="fld">' + lab("Door orientation") + '<select class="in" id="qs-door-' + n + '">' + opt([""].concat(DOOR_ORIENTATIONS), v.door) + "</select></div></div>" +
       '<div class="fld">' + lab("Ship-to / delivery address") + '<div class="combo-wrap"><input class="in addr-input" id="qs-ship-' + n + '" value="' + esc(v.ship) + '"><div class="combo-list" id="qs-ship-' + n + '-list"></div></div><div class="subline" id="qs-ship-' + n + '-hint" style="color:var(--warn)"></div></div>' +
       '<div class="row2"><div class="fld">' + lab("Requested delivery date") + '<div class="combo-wrap"><input type="hidden" id="qs-date-' + n + '" value="' + esc(v.date) + '">' +
@@ -2844,15 +2878,19 @@
     var custId = el("q-customer").value;
     if (custId) return custId;
     var typed = el("q-cust-search").value.trim();
-    if (!typed) return "";
-    var existing = state.customers.find(function (c) { return c.name.trim().toLowerCase() === typed.toLowerCase(); });
+    var typedAcct = el("q-cust-account").value.trim();
+    if (!typed && !typedAcct) return "";
+    var existing = typed ? state.customers.find(function (c) { return c.name.trim().toLowerCase() === typed.toLowerCase(); }) : null;
+    if (!existing && typedAcct) existing = state.customers.find(function (c) { return (c.accountNumber || "").toLowerCase() === typedAcct.toLowerCase(); });
     if (existing) {
-      el("q-customer").value = existing.id;
-      el("q-cust-search").value = existing.name + (existing.accountNumber ? " (" + existing.accountNumber + ")" : "");
-      if (el("q-email") && !el("q-email").value.trim() && existing.email) el("q-email").value = existing.email;
+      var keepEmail = el("q-email").value.trim(), keepPhone = el("q-phone").value.trim();
+      quoteFillCustomer(existing);
+      if (keepEmail) el("q-email").value = keepEmail;
+      if (keepPhone) el("q-phone").value = keepPhone;
       return existing.id;
     }
-    var obj = { id: uid(), name: typed, accountNumber: "", contact: "", email: "", phone: "", billingAddress: "", notes: "" };
+    if (!typed) return "";
+    var obj = { id: uid(), name: typed, accountNumber: typedAcct, contact: "", email: el("q-email").value.trim(), phone: el("q-phone").value.trim(), billingAddress: "", notes: "" };
     state.customers.unshift(obj);
     el("q-customer").value = obj.id;
     flash("Added new customer \u201c" + typed + "\u201d automatically");
@@ -2933,6 +2971,7 @@
     quoteEnsureCustomerSelected();
     var custId = el("q-customer").value;
     if (!custId) return flash("Enter a customer");
+    quoteSyncCustomerBlanks(custId);
     var category = el("q-category").value;
     var cust = customerById(custId);
     var customerName = cust ? cust.name : "";
@@ -4128,10 +4167,7 @@
     "quote-cust-pick": function (t) {
       var id = t.getAttribute("data-id");
       var c = customerById(id);
-      el("q-customer").value = id;
-      el("q-cust-search").value = c ? (c.name + (c.accountNumber ? " (" + c.accountNumber + ")" : "")) : id;
-      el("q-cust-list").style.display = "none";
-      if (el("q-email")) el("q-email").value = c && c.email ? c.email : "";
+      if (c) quoteFillCustomer(c);
     },
     "quote-newcust-toggle": function () { var d = el("q-newcust"); d.style.display = d.style.display === "none" ? "grid" : "none"; },
     "quote-newcust-create": function () {
@@ -4141,8 +4177,7 @@
       state.customers.unshift(obj);
       commit();
       el("q-customer").value = obj.id;
-      el("q-cust-search").value = obj.name + (obj.accountNumber ? " (" + obj.accountNumber + ")" : "");
-      el("q-cust-list").style.display = "none";
+      quoteFillCustomer(obj);
       el("q-newcust").style.display = "none";
       el("q-newcust-name").value = ""; el("q-newcust-account").value = "";
       flash("Customer added and selected");
@@ -4239,6 +4274,7 @@
     else if (e.target.id === "r-cont-search") { el("r-cont").value = ""; renderContainerCombo(e.target.value); }
     else if (e.target.id === "r-cust-search") { el("r-cust").value = ""; renderCustomerCombo(e.target.value); }
     else if (e.target.id === "q-cust-search") { el("q-customer").value = ""; renderQuoteCustomerCombo(e.target.value); }
+    else if (e.target.id === "q-cust-account") { el("q-customer").value = ""; renderQuoteAccountCombo(e.target.value); }
     else if (e.target.id === "q-salescont-search") { el("q-salescont").value = ""; el("q-bookvalue-wrap").style.display = "none"; renderSalesContainerCombo(e.target.value); }
     else if (e.target.id === "q-sales-spec-color") { updateSalesSpecMatchInfo(); }
     else if (e.target.classList.contains("addr-input")) { renderAddressCombo(e.target.id, e.target.value); }
@@ -4287,6 +4323,7 @@
     if (e.target.id === "r-cont-search") renderContainerCombo(e.target.value);
     else if (e.target.id === "r-cust-search") renderCustomerCombo(e.target.value);
     else if (e.target.id === "q-cust-search") renderQuoteCustomerCombo(e.target.value);
+    else if (e.target.id === "q-cust-account") renderQuoteAccountCombo(e.target.value);
     else if (e.target.id === "q-salescont-search") renderSalesContainerCombo(e.target.value);
     else if (e.target.classList.contains("addr-input")) renderAddressCombo(e.target.id, e.target.value);
   });
@@ -4298,6 +4335,13 @@
 
     else if (e.target.classList.contains("coll-stage-select")) { setCollectionStage(e.target.getAttribute("data-id"), e.target.value); renderCollections(el("view")); }
     else if (e.target.id === "q-category") { quoteShowGroup(e.target.value); }
+    else if (e.target.id === "q-cust-account" || e.target.id === "q-cust-search") {
+      if (!el("q-customer").value) {
+        var tv = e.target.value.trim().toLowerCase();
+        var hit = tv && state.customers.filter(function (c) { return (e.target.id === "q-cust-account" ? (c.accountNumber || "") : c.name).trim().toLowerCase() === tv; });
+        if (hit && hit.length === 1) quoteFillCustomer(hit[0]);
+      }
+    }
     else if (e.target.id === "q-container-type") {
       var rate = rateForType(e.target.value);
       if (rate) { el("q-monthly-rate").value = rate.monthlyRate; el("q-service-fee").value = rate.serviceFee; }
