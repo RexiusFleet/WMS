@@ -72,6 +72,10 @@
   .btn.sm { padding:5px 9px; font-size:12px; }
   .btn:disabled { opacity:.5; cursor:not-allowed; }
 
+  .csec { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:#f7f9f5; display:grid; gap:10px; }
+  .csec-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .csec-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  #q-rental-sections-wrap { display:grid; gap:8px; }
   .tablewrap { border:1px solid var(--line); border-radius:10px; background:#fff; overflow-x:auto; }
   table.tbl { width:100%; border-collapse:collapse; font-size:13px; }
   .tbl th { text-align:left; padding:10px 12px; background:#d7ded2; color:var(--ink); font-size:11px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap; position:sticky; top:0; z-index:2; box-shadow:0 2px 4px rgba(0,0,0,.1); }
@@ -245,8 +249,15 @@
 
   /* ------------------------- state ------------------------- */
   var state = { containers: [], customers: [], rentals: [], invoices: [], collections: [], hauls: [], salescontainers: [], quotes: [], dispatchcards: [], profiles: [], salesinvoices: [], ratecards: [] };
+  var VALID_TABS = ["dashboard", "fleet", "customers", "rentals", "billing", "collections", "haul", "sales-inv", "quotes", "dispatch", "sales-billing", "completed-jobs", "rate-card", "driver-access"];
+  function lastTabOrDefault() {
+    try {
+      var saved = window.localStorage.getItem("wms-tracker-last-tab");
+      return (saved && VALID_TABS.indexOf(saved) !== -1) ? saved : "dashboard";
+    } catch (e) { return "dashboard"; }
+  }
   var ui = {
-    tab: "dashboard",
+    tab: lastTabOrDefault(),
     fleetQ: "", fleetFilter: "All", fleetType: "",
     custQ: "",
     rentalView: "active", rentalQ: "",
@@ -2440,7 +2451,11 @@
 
       (editing ? "" : '<div class="fld" id="q-lineitems-wrap" style="display:none"><label>Line items added</label><div id="q-lineitems-list" class="list"></div></div>') +
 
-      '<div class="quote-group" id="q-group-rental">' +
+      (editing ? "" : '<div class="quote-group" id="q-rental-sections-wrap" style="display:none">' +
+        '<div id="q-rental-sections"></div>' +
+        '<div class="csec-actions"><button type="button" class="btn sm ghost" data-act="qsec-add">+ Add another container</button>' +
+        '<button type="button" class="btn sm ghost" data-act="qsec-add-copy">+ Add another container (copy of previous)</button></div></div>') +
+      (editing ? '<div class="quote-group" id="q-group-rental">' : '<div class="quote-group" id="q-group-rental-legacy" style="display:none">') +
       '<div class="row2"><div class="fld"><label>Container type needed</label><select class="in" id="q-container-type"' + dis + '>' + opt(TYPES, q.containerType || TYPES[0]) + "</select></div>" +
       '<div class="fld"><label>Monthly rate ($)</label><input class="in mono" id="q-monthly-rate" type="number" min="0" value="' + esc(editing ? q.monthlyRate : ((rateForType(q.containerType || TYPES[0]) || {}).monthlyRate || "")) + '"' + dis + "></div></div>" +
       '<div class="fld"><label>Delivery / service fee ($)</label><input class="in mono" id="q-service-fee" type="number" min="0" value="' + esc(editing ? q.serviceFee : ((rateForType(q.containerType || TYPES[0]) || {}).serviceFee || "")) + '"' + dis + "></div>" +
@@ -2481,7 +2496,7 @@
       '<div class="fld"><label>Haul amount ($)</label><input class="in mono" id="q-haul-amount" type="number" min="0" value="' + esc(q.haulAmount) + '"' + dis + "></div>" +
       "</div>" +
 
-      '<div class="fld"><label>Requested delivery / service date (optional)</label>' +
+      '<div class="fld" id="q-reqdate-fld"><label>Requested delivery / service date (optional)</label>' +
       '<div class="combo-wrap"><input type="hidden" id="q-reqdate" value="' + esc(q.requestedDate || "") + '">' +
       '<input class="in" id="q-reqdate-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(q.requestedDate)) + '"' + dis + (dis ? "" : ' data-act="quote-date-toggle" data-field="q-reqdate" style="cursor:pointer"') + '>' +
       '<div class="combo-list cal-panel" id="q-reqdate-cal"></div></div></div>' +
@@ -2496,10 +2511,10 @@
       (readOnly ? "" : '<button type="button" class="btn sm ghost" style="margin-top:6px" data-act="quote-contact-add">+ Add contact</button>') +
       "</div>" +
       '<div class="row2"><div class="fld"><label>Payment method</label><input class="in" id="q-payment-method" value="' + esc(q.paymentMethod || "") + '"' + dis + "></div>" +
-      '<div class="fld"><label>Door orientation</label><select class="in" id="q-door-orientation"' + dis + '>' + opt([""].concat(DOOR_ORIENTATIONS), q.doorOrientation || "") + "</select></div></div>" +
+      '<div class="fld" id="q-door-fld"><label>Door orientation</label><select class="in" id="q-door-orientation"' + dis + '>' + opt([""].concat(DOOR_ORIENTATIONS), q.doorOrientation || "") + "</select></div></div>" +
       '<div class="fld"><label>PO # (optional)</label><input class="in" id="q-po" value="' + esc(q.poNumber) + '"' + dis + "></div>" +
       '<div class="fld"><label>Notes</label><textarea class="in" id="q-notes" rows="2"' + dis + '>' + esc(q.notes) + "</textarea></div>" +
-      (editing ? "" : '<div class="fld"><label>Add this container' + '</label><div style="display:flex;gap:8px;align-items:center">' +
+      (editing ? "" : '<div class="fld" id="q-add-row"><label>Add this container' + '</label><div style="display:flex;gap:8px;align-items:center">' +
         '<input class="in mono" id="q-lineitem-qty" type="number" min="1" value="1" style="width:80px" title="Quantity">' +
         '<button type="button" class="btn sm ghost" id="q-lineitem-add-btn" data-act="quote-lineitem-add" style="flex:1">+ Add to quote</button></div>' +
         '<div class="muted" style="font-size:12px;margin-top:4px">Set a quantity to add several identical containers at once. Each becomes its own dispatch job — edit any single one afterward if it needs a different date or detail.</div></div>'),
@@ -2509,6 +2524,7 @@
         : '<button class="btn ghost" data-act="quote-save" data-approve="0">Save as draft</button>' +
           '<button class="btn primary" data-act="quote-save" data-approve="1">Save &amp; approve — send to dispatch</button>'),
       "large");
+    if (!editing) { QS_SEQ = 0; quoteAddSection(false); }
     quoteShowGroup(q.category);
     if (!editing) renderQuoteLineItemsList();
     renderQuoteContactsList();
@@ -2519,11 +2535,102 @@
       var elg = el("q-group-" + slug);
       if (elg) elg.style.display = slug === quoteCatSlug(cat) ? "grid" : "none";
     });
+    var secWrap = el("q-rental-sections-wrap");
+    var secMode = !!secWrap && cat === "Rental";
+    if (secWrap) secWrap.style.display = secMode ? "grid" : "none";
+    ["q-reqdate-fld", "q-door-fld", "q-add-row", "q-lineitems-wrap"].forEach(function (id) {
+      var e2 = el(id); if (!e2) return;
+      if (secMode) e2.style.display = "none";
+      else if (id === "q-lineitems-wrap") renderQuoteLineItemsList();
+      else e2.style.display = "";
+    });
     var sharedShipto = el("q-shipto-shared-wrap");
-    if (sharedShipto) sharedShipto.style.display = cat === "Contract Haul" ? "none" : "";
+    if (sharedShipto) sharedShipto.style.display = (cat === "Contract Haul" || secMode) ? "none" : "";
     var genericSameAddr = el("q-sameaddr-wrap");
-    if (genericSameAddr && cat === "Contract Haul") genericSameAddr.style.display = "none";
+    if (genericSameAddr && (cat === "Contract Haul" || secMode)) genericSameAddr.style.display = "none";
     else if (genericSameAddr && QUOTE_LINE_ITEMS.length) genericSameAddr.style.display = "block";
+  }
+
+  var QS_SEQ = 0;
+  function quoteSectionHtml(n, v) {
+    function lab(t) { return "<label>" + t + "</label>"; }
+    return '<div class="csec" data-n="' + n + '">' +
+      '<div class="csec-head"><strong class="csec-title">Container</strong><span class="csec-tools">' +
+      '<button type="button" class="btn sm ghost csec-copybtn" data-act="qsec-copy" data-n="' + n + '">Copy from previous</button> ' +
+      '<button type="button" class="btn sm ghost danger csec-rmbtn" data-act="qsec-remove" data-n="' + n + '">Remove</button></span></div>' +
+      '<div class="row2"><div class="fld">' + lab("Container type") + '<select class="in qs-type" id="qs-type-' + n + '" data-n="' + n + '">' + opt(TYPES, v.type) + "</select></div>" +
+      '<div class="fld">' + lab("Monthly rate ($)") + '<input class="in mono" id="qs-rate-' + n + '" type="number" min="0" value="' + esc(v.rate) + '"></div></div>' +
+      '<div class="row2"><div class="fld">' + lab("Delivery / service fee ($)") + '<input class="in mono" id="qs-fee-' + n + '" type="number" min="0" value="' + esc(v.fee) + '"></div>' +
+      '<div class="fld">' + lab("Door orientation") + '<select class="in" id="qs-door-' + n + '">' + opt([""].concat(DOOR_ORIENTATIONS), v.door) + "</select></div></div>" +
+      '<div class="fld">' + lab("Ship-to / delivery address") + '<div class="combo-wrap"><input class="in addr-input" id="qs-ship-' + n + '" value="' + esc(v.ship) + '"><div class="combo-list" id="qs-ship-' + n + '-list"></div></div><div class="subline" id="qs-ship-' + n + '-hint" style="color:var(--warn)"></div></div>' +
+      '<div class="row2"><div class="fld">' + lab("Requested delivery date") + '<div class="combo-wrap"><input type="hidden" id="qs-date-' + n + '" value="' + esc(v.date) + '">' +
+      '<input class="in" id="qs-date-' + n + '-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(v.date)) + '" data-act="quote-date-toggle" data-field="qs-date-' + n + '" style="cursor:pointer">' +
+      '<div class="combo-list cal-panel" id="qs-date-' + n + '-cal"></div></div></div>' +
+      '<div class="fld">' + lab("Quantity (identical containers)") + '<input class="in mono" id="qs-qty-' + n + '" type="number" min="1" value="' + esc(v.qty || 1) + '"></div></div>' +
+      "</div>";
+  }
+  function quoteSectionRead(n) {
+    var g = function (id) { var e2 = el(id + n); return e2 ? e2.value : ""; };
+    return {
+      category: "Rental", containerType: g("qs-type-"), monthlyRate: Number(g("qs-rate-")) || 0, serviceFee: Number(g("qs-fee-")) || 0,
+      shipToAddress: g("qs-ship-").trim(), requestedDate: g("qs-date-") || "", doorOrientation: g("qs-door-"),
+      qty: Math.max(1, Number(g("qs-qty-")) || 1)
+    };
+  }
+  function quoteSectionFill(n, v) {
+    var set = function (id, val) { var e2 = el(id + n); if (e2) e2.value = val == null ? "" : val; };
+    set("qs-type-", v.containerType); set("qs-rate-", v.monthlyRate || ""); set("qs-fee-", v.serviceFee || "");
+    set("qs-ship-", v.shipToAddress); set("qs-date-", v.requestedDate); set("qs-door-", v.doorOrientation);
+    var d = el("qs-date-" + n + "-display"); if (d) d.value = formatDateDisplay(v.requestedDate);
+  }
+  function quoteSectionsRelabel() {
+    var secs = document.querySelectorAll("#q-rental-sections .csec");
+    Array.prototype.forEach.call(secs, function (sec, i) {
+      sec.querySelector(".csec-title").textContent = "Container " + (i + 1) + (secs.length > 1 ? " of " + secs.length : "");
+      sec.querySelector(".csec-copybtn").style.display = i === 0 ? "none" : "";
+      sec.querySelector(".csec-rmbtn").style.display = secs.length === 1 ? "none" : "";
+    });
+  }
+  function quoteAddSection(copyPrev) {
+    var host = el("q-rental-sections");
+    if (!host) return;
+    var secs = host.querySelectorAll(".csec");
+    var v;
+    if (copyPrev && secs.length) {
+      v = quoteSectionRead(secs[secs.length - 1].getAttribute("data-n"));
+      v = { type: v.containerType, rate: v.monthlyRate || "", fee: v.serviceFee || "", ship: v.shipToAddress, date: v.requestedDate, door: v.doorOrientation, qty: 1 };
+    } else {
+      var rc = rateForType(TYPES[0]) || {};
+      v = { type: TYPES[0], rate: rc.monthlyRate || "", fee: rc.serviceFee || "", ship: "", date: "", door: "", qty: 1 };
+    }
+    QS_SEQ++;
+    host.insertAdjacentHTML("beforeend", quoteSectionHtml(QS_SEQ, v));
+    quoteSectionsRelabel();
+    var added = host.lastElementChild;
+    if (secs.length && added.scrollIntoView) added.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function quoteSectionCopyPrev(n) {
+    var sec = document.querySelector('#q-rental-sections .csec[data-n="' + n + '"]');
+    var prev = sec && sec.previousElementSibling;
+    if (!prev) return flash("No previous container to copy from");
+    quoteSectionFill(n, quoteSectionRead(prev.getAttribute("data-n")));
+    flash("Copied from the previous container");
+  }
+  function quoteSectionRemove(n) {
+    var secs = document.querySelectorAll("#q-rental-sections .csec");
+    if (secs.length <= 1) return;
+    var sec = document.querySelector('#q-rental-sections .csec[data-n="' + n + '"]');
+    if (sec) sec.parentNode.removeChild(sec);
+    quoteSectionsRelabel();
+  }
+  function quoteSectionItems() {
+    var out = [], bad = null;
+    Array.prototype.forEach.call(document.querySelectorAll("#q-rental-sections .csec"), function (sec, i) {
+      var it = quoteSectionRead(sec.getAttribute("data-n"));
+      if (it.monthlyRate > 0) { for (var k = 0; k < it.qty; k++) out.push(Object.assign({}, it)); }
+      else if (it.serviceFee > 0 || it.shipToAddress || it.requestedDate || it.doorOrientation) { if (bad === null) bad = i + 1; }
+    });
+    return { items: out, badIndex: bad };
   }
   function quoteSetSalesMode(mode) {
     var specificWrap = el("q-sales-specific-wrap"), criteriaWrap = el("q-sales-criteria-wrap");
@@ -2819,10 +2926,18 @@
     }
 
     // New quote(s): fold in whatever's currently in the fields as one final line item, if filled
-    var current = quoteReadCurrentLineItem();
-    var items = QUOTE_LINE_ITEMS.slice();
-    if (quoteLineItemHasContent(current)) items.push(current);
-    if (!items.length) return flash("Add at least one line item before saving");
+    var items;
+    if (category === "Rental" && el("q-rental-sections")) {
+      var sr = quoteSectionItems();
+      if (sr.badIndex !== null) return flash("Container " + sr.badIndex + " needs a monthly rate");
+      items = sr.items;
+      if (!items.length) return flash("Fill in at least one container (monthly rate) before saving");
+    } else {
+      var current = quoteReadCurrentLineItem();
+      items = QUOTE_LINE_ITEMS.slice();
+      if (quoteLineItemHasContent(current)) items.push(current);
+      if (!items.length) return flash("Add at least one line item before saving");
+    }
 
     var notes = el("q-notes").value.trim();
     var contacts = quoteCollectContacts();
@@ -2845,7 +2960,7 @@
         salesSpecType: item.salesSpecType || "", salesSpecCondition: item.salesSpecCondition || "", salesSpecColor: item.salesSpecColor || "",
         pickupAddress: item.pickupAddress || "", haulAmount: item.haulAmount || 0,
         requestedDate: item.requestedDate || "", shipToAddress: item.shipToAddress || "", poNumber: po,
-        contacts: contacts, paymentMethod: paymentMethod, doorOrientation: doorOrientation, email: email
+        contacts: contacts, paymentMethod: paymentMethod, doorOrientation: item.doorOrientation != null ? item.doorOrientation : doorOrientation, email: email
       };
       state.quotes.unshift(newObj);
       if (category === "Sales" && newObj.salesContainerId) {
@@ -3828,7 +3943,11 @@
 
   /* --------------------------- dispatch --------------------------- */
   var CLICK = {
-    "tab": function (t) { ui.tab = t.getAttribute("data-tab"); closeModal(); render(); },
+    "tab": function (t) {
+      ui.tab = t.getAttribute("data-tab");
+      try { window.localStorage.setItem("wms-tracker-last-tab", ui.tab); } catch (e) {}
+      closeModal(); render();
+    },
     "load-sample": loadRealData,
     "reset-all": resetAll,
     "modal-close": closeModal,
@@ -3983,6 +4102,10 @@
       if (c) { wrap.style.display = ""; disp.textContent = money(c.bookValue, 0); } else { wrap.style.display = "none"; }
     },
     "quote-lineitem-add": function () { quoteAddLineItem(); },
+    "qsec-add": function () { quoteAddSection(false); },
+    "qsec-add-copy": function () { quoteAddSection(true); },
+    "qsec-copy": function (t) { quoteSectionCopyPrev(t.getAttribute("data-n")); },
+    "qsec-remove": function (t) { quoteSectionRemove(t.getAttribute("data-n")); },
     "quote-contact-add": function () { quoteAddContact(); },
     "quote-contact-remove": function (t) { quoteRemoveContact(t.getAttribute("data-index")); },
     "confirm-contact-add": function () { dispatcherAddConfirmContactRow(); },
@@ -4121,6 +4244,10 @@
     else if (e.target.id === "q-container-type") {
       var rate = rateForType(e.target.value);
       if (rate) { el("q-monthly-rate").value = rate.monthlyRate; el("q-service-fee").value = rate.serviceFee; }
+    }
+    else if (e.target.classList.contains("qs-type")) {
+      var rate2 = rateForType(e.target.value), n2 = e.target.getAttribute("data-n");
+      if (rate2) { el("qs-rate-" + n2).value = rate2.monthlyRate; el("qs-fee-" + n2).value = rate2.serviceFee; }
     }
     else if (e.target.id === "q-sales-spec-type" || e.target.id === "q-sales-spec-condition") { updateSalesSpecMatchInfo(); }
     else if (e.target.id === "p-role") {
