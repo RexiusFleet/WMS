@@ -77,6 +77,20 @@
   .qf-h { margin:0; font-size:15px; padding-bottom:8px; border-bottom:1px solid var(--line); }
   .qf-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
   @media (max-width:900px){ .qf-grid { grid-template-columns:1fr; } }
+  .qgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:12px; }
+  .qcard { border:1px solid var(--line); border-radius:10px; padding:12px; background:#fff; display:grid; gap:8px; cursor:grab; align-content:start; }
+  .qcard-hard { border-color:#c0392b; box-shadow:inset 3px 0 0 #c0392b; }
+  .qcard-top { display:flex; justify-content:space-between; align-items:center; }
+  .qcard-cust { font-weight:700; font-size:15px; }
+  .qcard-sum { color:var(--muted); font-size:13px; }
+  .qcard-date { background:#f3f6f1; border-radius:8px; padding:8px 10px; display:grid; gap:3px; }
+  .qcard-datelbl { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .qcard-dateval { font-weight:700; font-size:15px; }
+  .qcard-note { font-size:12.5px; }
+  .qcard-actions { display:flex; gap:8px; }
+  .chk-line { display:flex; align-items:center; gap:6px; font-weight:500; text-transform:none; letter-spacing:0; font-size:13px; color:var(--ink); }
+  .chk-line input { width:auto; }
+  .hard-warn { background:#fdecea; border:1px solid #e3a59f; color:#8a1f14; border-radius:8px; padding:10px 12px; font-size:13px; font-weight:600; }
   .dcard-city { font-weight:700; white-space:nowrap; }
   .csec { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:#f7f9f5; display:grid; gap:10px; }
   .csec-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
@@ -229,6 +243,11 @@
      Row Level Security policies on the tables, not by keeping this key secret. */
   var SUPABASE_URL = "https://ufipqwxmkhyojvrfijfw.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVmaXBxd3hta2h5b2p2cmZpamZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3NTE5NTIsImV4cCI6MjEwMDMyNzk1Mn0.2kJcSZBrrr0HegVkMzfOzAWINE1adtQC_LG53G5LpEg";
+  /* Google address verification (optional). Paste a Google Maps Platform API key here to have the
+     ship-to / pick-up address fields check each address against Google when the rep tabs out of the
+     field. In Google Cloud Console: enable the "Maps JavaScript API" and "Geocoding API", then
+     restrict the key to this site's URL (HTTP referrers). Leave blank to turn verification off. */
+  var GOOGLE_MAPS_API_KEY = "";
   var sb = (window.supabase && SUPABASE_URL.indexOf("YOUR_SUPABASE_URL") !== 0 && SUPABASE_ANON_KEY.indexOf("YOUR_SUPABASE_ANON_KEY") !== 0)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         auth: { persistSession: true, autoRefreshToken: true, storage: window.localStorage, storageKey: "wms-tracker-auth" }
@@ -349,6 +368,7 @@
     var disp = el(fieldPrefix + "-display");
     if (disp) disp.value = formatDateDisplay(iso);
     el(fieldPrefix + "-cal").style.display = "none";
+    if (fieldPrefix === "dc-date" || fieldPrefix === "dc-req") dispatchHardWarnRefresh();
   }
   function quoteDateShiftMonth(fieldPrefix, dir) {
     CAL_VIEW_MONTH[fieldPrefix] = dir > 0 ? nextMonthKey(CAL_VIEW_MONTH[fieldPrefix]) : prevMonthKey(CAL_VIEW_MONTH[fieldPrefix]);
@@ -359,6 +379,7 @@
     var disp = el(fieldPrefix + "-display");
     if (disp) disp.value = "";
     el(fieldPrefix + "-cal").style.display = "none";
+    if (fieldPrefix === "dc-date" || fieldPrefix === "dc-req") dispatchHardWarnRefresh();
   }
   function quoteDateToday(fieldPrefix) {
     quoteDatePick(fieldPrefix, today());
@@ -1321,7 +1342,61 @@
     var hintEl = el(fieldId + "-hint");
     var input = el(fieldId);
     if (!hintEl || !input) return;
+    hintEl.style.color = "var(--warn)";
     hintEl.textContent = looksLikeAddress(input.value) ? "" : "Looks incomplete — check for a street number and street name.";
+  }
+  var GMAPS_STATE = { geocoder: null, loading: null };
+  function googleGeocoder() {
+    if (!GOOGLE_MAPS_API_KEY) return Promise.resolve(null);
+    if (GMAPS_STATE.geocoder) return Promise.resolve(GMAPS_STATE.geocoder);
+    if (!GMAPS_STATE.loading) {
+      GMAPS_STATE.loading = new Promise(function (resolve) {
+        function ready() {
+          if (window.google && google.maps && google.maps.Geocoder) { GMAPS_STATE.geocoder = new google.maps.Geocoder(); resolve(GMAPS_STATE.geocoder); }
+          else resolve(null);
+        }
+        if (window.google && google.maps && google.maps.Geocoder) return ready();
+        window.__gmapsReady = ready;
+        var sc = document.createElement("script");
+        sc.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(GOOGLE_MAPS_API_KEY) + "&callback=__gmapsReady";
+        sc.async = true;
+        sc.onerror = function () { resolve(null); };
+        document.head.appendChild(sc);
+      });
+    }
+    return GMAPS_STATE.loading;
+  }
+  function cleanGoogleAddress(a) { return (a || "").replace(/,\s*(USA|United States)$/i, ""); }
+  function normAddr(a) { return (a || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+  async function verifyAddressField(fieldId) {
+    var input = el(fieldId), hintEl = el(fieldId + "-hint");
+    if (!input || !hintEl || !GOOGLE_MAPS_API_KEY) return;
+    var typed = input.value.trim();
+    if (!typed || !looksLikeAddress(typed)) return;
+    hintEl.style.color = "var(--muted, #6b7a6b)";
+    hintEl.textContent = "Checking with Google\u2026";
+    var geocoder = await googleGeocoder();
+    if (!geocoder) { hintEl.textContent = ""; return; }
+    geocoder.geocode({ address: typed, componentRestrictions: { country: "US" } }, function (results, status) {
+      if (!el(fieldId) || el(fieldId).value.trim() !== typed) return; // field changed while we waited
+      var h = el(fieldId + "-hint");
+      if (!h) return;
+      var lst = el(fieldId + "-list"); if (lst) lst.style.display = "none"; // done typing: don't let the suggestions cover the result
+      if (status === "OK" && results && results.length) {
+        var r = results[0], found = cleanGoogleAddress(r.formatted_address);
+        var street = (r.types || []).indexOf("street_address") !== -1 || (r.types || []).indexOf("premise") !== -1 || (r.types || []).indexOf("subpremise") !== -1;
+        var exact = !r.partial_match && street;
+        var same = normAddr(found) === normAddr(typed);
+        h.style.color = exact ? "var(--primary-2, #1b6b34)" : "var(--warn)";
+        h.innerHTML = (exact ? "\u2713 Verified by Google" : "\u26A0 Google only found a close match") +
+          (same ? "" : ": " + esc(found) + ' <a href="#" data-act="addr-use-google" data-field="' + esc(fieldId) + '" data-value="' + esc(found) + '" style="font-weight:600">Use this address</a>');
+      } else if (status === "ZERO_RESULTS") {
+        h.style.color = "var(--warn)";
+        h.textContent = "\u26A0 Google couldn't find this address \u2014 double-check it before sending to dispatch.";
+      } else {
+        h.textContent = ""; // quota / key / network problem: stay out of the way
+      }
+    });
   }
   function comboCustomerItems(term) {
     var t = term.trim().toLowerCase();
@@ -1410,7 +1485,7 @@
       customerId: r.customerId, customerName: customerName(r.customerId),
       containerId: r.containerId, containerType: "",
       shipToAddress: r.shipToAddress || "", pickupAddress: "",
-      amount: r.monthlyRate, requestedDate: reqDate, scheduledDate: reqDate,
+      amount: r.monthlyRate, requestedDate: reqDate, scheduledDate: "", dateNote: "", hardDate: false,
       driver: "", released: false, notes: ""
     };
     state.rentals = state.rentals.map(function (x) { return x.id === id ? Object.assign({}, x, { requestedReturnDate: reqDate }) : x; });
@@ -2465,7 +2540,7 @@
       containerType: TYPES[0], monthlyRate: "", serviceFee: "",
       salesContainerId: "", salePrice: "",
       pickupAddress: "", haulAmount: "",
-      requestedDate: "", shipToAddress: "", poNumber: "", paymentMethod: "", doorOrientation: "", email: "",
+      requestedDate: "", dateNote: "", hardDate: false, shipToAddress: "", poNumber: "", paymentMethod: "", doorOrientation: "", email: "",
       salesSpecType: "", salesSpecCondition: "", salesSpecColor: ""
     };
     var readOnly = editing && editing.status === "Declined";
@@ -2532,11 +2607,11 @@
 
       '<div class="quote-group" id="q-group-haul">' +
       '<div class="fld"><label>Container size</label><select class="in" id="q-haul-container-type"' + dis + '>' + opt(TYPES, q.containerType || TYPES[0]) + "</select></div>" +
-      '<div class="fld"><label>Pick-up address</label><div class="combo-wrap"><input class="in addr-input" id="q-pickup" value="' + esc(q.pickupAddress) + '"' + dis + '><div class="combo-list" id="q-pickup-list"></div></div><div class="subline" id="q-pickup-hint" style="color:var(--warn)"></div></div>' +
+      '<div class="fld"><label>Pick-up address</label><div class="combo-wrap"><input class="in addr-input verify-addr" id="q-pickup" value="' + esc(q.pickupAddress) + '"' + dis + '><div class="combo-list" id="q-pickup-list"></div></div><div class="subline" id="q-pickup-hint" style="color:var(--warn)"></div></div>' +
       (editing ? "" : '<div class="fld" id="q-haul-samepickup-wrap" style="display:none;margin-top:-8px">' +
         '<label style="display:flex;align-items:center;gap:6px;font-weight:500;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">' +
         '<input type="checkbox" id="q-haul-samepickup-check" style="width:auto"> Use the same pick-up address as line item 1</label></div>') +
-      '<div class="fld"><label>Ship-to / delivery address</label><div class="combo-wrap"><input class="in addr-input" id="q-haul-shipto" value="' + esc(q.shipToAddress) + '"' + dis + '><div class="combo-list" id="q-haul-shipto-list"></div></div><div class="subline" id="q-haul-shipto-hint" style="color:var(--warn)"></div></div>' +
+      '<div class="fld"><label>Ship-to / delivery address</label><div class="combo-wrap"><input class="in addr-input verify-addr" id="q-haul-shipto" value="' + esc(q.shipToAddress) + '"' + dis + '><div class="combo-list" id="q-haul-shipto-list"></div></div><div class="subline" id="q-haul-shipto-hint" style="color:var(--warn)"></div></div>' +
       (editing ? "" : '<div class="fld" id="q-haul-sameship-wrap" style="display:none;margin-top:-8px">' +
         '<label style="display:flex;align-items:center;gap:6px;font-weight:500;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">' +
         '<input type="checkbox" id="q-haul-sameship-check" style="width:auto"> Use the same delivery address as line item 1</label></div>') +
@@ -2546,8 +2621,11 @@
       '<div class="fld" id="q-reqdate-fld"><label>Requested delivery / service date (optional)</label>' +
       '<div class="combo-wrap"><input type="hidden" id="q-reqdate" value="' + esc(q.requestedDate || "") + '">' +
       '<input class="in" id="q-reqdate-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(q.requestedDate)) + '"' + dis + (dis ? "" : ' data-act="quote-date-toggle" data-field="q-reqdate" style="cursor:pointer"') + '>' +
-      '<div class="combo-list cal-panel" id="q-reqdate-cal"></div></div></div>' +
-      '<div class="fld" id="q-shipto-shared-wrap"><label>Ship-to / delivery address</label><div class="combo-wrap"><input class="in addr-input" id="q-shipto" value="' + esc(q.shipToAddress) + '"' + dis + '><div class="combo-list" id="q-shipto-list"></div></div><div class="subline" id="q-shipto-hint" style="color:var(--warn)"></div></div>' +
+      '<div class="combo-list cal-panel" id="q-reqdate-cal"></div></div>' +
+      '<input class="in" id="q-datenote" list="date-note-opts" placeholder="Delivery date notes \u2014 e.g. ASAP, week of 10/12, waiting for info" style="margin-top:8px" value="' + esc(q.dateNote || "") + '"' + dis + '>' +
+      '<label class="chk-line" style="margin-top:6px"><input type="checkbox" id="q-harddate"' + (q.hardDate ? " checked" : "") + dis + '> Hard date \u2014 must happen on the date above</label>' +
+      '<datalist id="date-note-opts"><option value="ASAP"><option value="Week of "><option value="Specific date"><option value="Waiting for info"></datalist></div>' +
+      '<div class="fld" id="q-shipto-shared-wrap"><label>Ship-to / delivery address</label><div class="combo-wrap"><input class="in addr-input verify-addr" id="q-shipto" value="' + esc(q.shipToAddress) + '"' + dis + '><div class="combo-list" id="q-shipto-list"></div></div><div class="subline" id="q-shipto-hint" style="color:var(--warn)"></div></div>' +
       (editing ? "" : '<div class="fld" id="q-sameaddr-wrap" style="display:none;margin-top:-6px">' +
         '<label style="display:flex;align-items:center;gap:6px;font-weight:500;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">' +
         '<input type="checkbox" id="q-sameaddr-check" style="width:auto"> Use the same address as line item 1</label></div>')
@@ -2652,11 +2730,12 @@
       '<div class="fld">' + lab("Monthly rate ($)") + '<input class="in mono" id="qs-rate-' + n + '" type="number" min="0" value="' + esc(v.rate) + '"></div></div>' +
       '<div class="row2"><div class="fld">' + lab("Delivery / Pick-up fee ($)") + '<input class="in mono" id="qs-fee-' + n + '" type="number" min="0" value="' + esc(v.fee) + '"></div>' +
       '<div class="fld">' + lab("Door orientation") + '<select class="in" id="qs-door-' + n + '">' + opt([""].concat(DOOR_ORIENTATIONS), v.door) + "</select></div></div>" +
-      '<div class="fld">' + lab("Ship-to / delivery address") + '<div class="combo-wrap"><input class="in addr-input" id="qs-ship-' + n + '" value="' + esc(v.ship) + '"><div class="combo-list" id="qs-ship-' + n + '-list"></div></div><div class="subline" id="qs-ship-' + n + '-hint" style="color:var(--warn)"></div></div>' +
+      '<div class="fld">' + lab("Ship-to / delivery address") + '<div class="combo-wrap"><input class="in addr-input verify-addr" id="qs-ship-' + n + '" value="' + esc(v.ship) + '"><div class="combo-list" id="qs-ship-' + n + '-list"></div></div><div class="subline" id="qs-ship-' + n + '-hint" style="color:var(--warn)"></div></div>' +
       '<div class="row2"><div class="fld">' + lab("Requested delivery date") + '<div class="combo-wrap"><input type="hidden" id="qs-date-' + n + '" value="' + esc(v.date) + '">' +
       '<input class="in" id="qs-date-' + n + '-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(v.date)) + '" data-act="quote-date-toggle" data-field="qs-date-' + n + '" style="cursor:pointer">' +
       '<div class="combo-list cal-panel" id="qs-date-' + n + '-cal"></div></div></div>' +
-      '<div></div></div>' +
+      '<div class="fld">' + lab("Delivery date notes") + '<input class="in" id="qs-datenote-' + n + '" list="date-note-opts" placeholder="e.g. ASAP, week of 10/12, waiting for info" value="' + esc(v.dateNote || "") + '"></div></div>' +
+      '<label class="chk-line"><input type="checkbox" id="qs-hard-' + n + '"' + (v.hardDate ? " checked" : "") + '> Hard delivery date \u2014 must be delivered on the date above</label>' +
       "</div>";
   }
   function quoteSectionRead(n) {
@@ -2664,13 +2743,15 @@
     return {
       category: "Rental", containerType: g("qs-type-"), monthlyRate: Number(g("qs-rate-")) || 0, serviceFee: Number(g("qs-fee-")) || 0,
       shipToAddress: g("qs-ship-").trim(), requestedDate: g("qs-date-") || "", doorOrientation: g("qs-door-"),
+      dateNote: g("qs-datenote-").trim(), hardDate: !!(el("qs-hard-" + n) && el("qs-hard-" + n).checked),
       qty: 1
     };
   }
   function quoteSectionFill(n, v) {
     var set = function (id, val) { var e2 = el(id + n); if (e2) e2.value = val == null ? "" : val; };
     set("qs-type-", v.containerType); set("qs-rate-", v.monthlyRate || ""); set("qs-fee-", v.serviceFee || "");
-    set("qs-ship-", v.shipToAddress); set("qs-date-", v.requestedDate); set("qs-door-", v.doorOrientation);
+    set("qs-ship-", v.shipToAddress); set("qs-date-", v.requestedDate); set("qs-door-", v.doorOrientation); set("qs-datenote-", v.dateNote);
+    if (el("qs-hard-" + n)) el("qs-hard-" + n).checked = !!v.hardDate;
     var d = el("qs-date-" + n + "-display"); if (d) d.value = formatDateDisplay(v.requestedDate);
   }
   function quoteSectionsRelabel() {
@@ -2688,7 +2769,7 @@
     var v;
     if (copyPrev && secs.length) {
       v = quoteSectionRead(secs[secs.length - 1].getAttribute("data-n"));
-      v = { type: v.containerType, rate: v.monthlyRate || "", fee: v.serviceFee || "", ship: v.shipToAddress, date: v.requestedDate, door: v.doorOrientation, qty: 1 };
+      v = { type: v.containerType, rate: v.monthlyRate || "", fee: v.serviceFee || "", ship: v.shipToAddress, date: v.requestedDate, door: v.doorOrientation, dateNote: v.dateNote, hardDate: v.hardDate, qty: 1 };
     } else {
       var rc = rateForType(TYPES[0]) || {};
       v = { type: TYPES[0], rate: rc.monthlyRate || "", fee: rc.serviceFee || "", ship: "", date: "", door: "", qty: 1 };
@@ -2718,7 +2799,7 @@
     Array.prototype.forEach.call(document.querySelectorAll("#q-rental-sections .csec"), function (sec, i) {
       var it = quoteSectionRead(sec.getAttribute("data-n"));
       if (it.monthlyRate > 0) { for (var k = 0; k < it.qty; k++) out.push(Object.assign({}, it)); }
-      else if (it.serviceFee > 0 || it.shipToAddress || it.requestedDate || it.doorOrientation) { if (bad === null) bad = i + 1; }
+      else if (it.serviceFee > 0 || it.shipToAddress || it.requestedDate || it.doorOrientation || it.dateNote) { if (bad === null) bad = i + 1; }
     });
     return { items: out, badIndex: bad };
   }
@@ -2828,7 +2909,8 @@
       salesContainerId: el("q-salescont").value || "", salePrice: Number(el("q-sale-price").value) || 0,
       salesSpecType: el("q-sales-spec-type") ? el("q-sales-spec-type").value : "", salesSpecCondition: el("q-sales-spec-condition") ? el("q-sales-spec-condition").value : "", salesSpecColor: el("q-sales-spec-color") ? el("q-sales-spec-color").value.trim() : "",
       pickupAddress: el("q-pickup").value.trim(), haulAmount: Number(el("q-haul-amount").value) || 0,
-      requestedDate: el("q-reqdate").value || "", shipToAddress: el(quoteShipToFieldId()).value.trim()
+      requestedDate: el("q-reqdate").value || "", shipToAddress: el(quoteShipToFieldId()).value.trim(),
+      dateNote: el("q-datenote").value.trim(), hardDate: el("q-harddate").checked
     };
   }
   function quoteClearLineItemFields() {
@@ -2836,6 +2918,7 @@
     el("q-salescont").value = ""; el("q-salescont-search").value = ""; el("q-sale-price").value = "";
     el("q-bookvalue-wrap").style.display = "none";
     el("q-pickup").value = ""; el("q-haul-amount").value = "";
+    el("q-datenote").value = ""; el("q-harddate").checked = false;
     el("q-reqdate").value = ""; el("q-reqdate-display").value = ""; el("q-shipto").value = ""; if (el("q-haul-shipto")) el("q-haul-shipto").value = "";
   }
   function renderQuoteContactsList() {
@@ -2946,6 +3029,7 @@
     el("q-haul-amount").value = item.haulAmount || "";
     el("q-reqdate").value = item.requestedDate || "";
     el("q-reqdate-display").value = formatDateDisplay(item.requestedDate);
+    el("q-datenote").value = item.dateNote || ""; el("q-harddate").checked = !!item.hardDate;
     el("q-shipto").value = item.shipToAddress || "";
     if (el("q-haul-shipto")) el("q-haul-shipto").value = item.shipToAddress || "";
     QUOTE_LINE_ITEM_EDIT_INDEX = index;
@@ -2988,6 +3072,7 @@
         salesSpecType: el("q-sales-spec-type") ? el("q-sales-spec-type").value : "", salesSpecCondition: el("q-sales-spec-condition") ? el("q-sales-spec-condition").value : "", salesSpecColor: el("q-sales-spec-color") ? el("q-sales-spec-color").value.trim() : "",
         pickupAddress: el("q-pickup").value.trim(), haulAmount: Number(el("q-haul-amount").value) || 0,
         requestedDate: el("q-reqdate").value || "", shipToAddress: el(quoteShipToFieldId()).value.trim(), poNumber: el("q-po").value.trim(),
+        dateNote: el("q-datenote").value.trim(), hardDate: el("q-harddate").checked,
         contacts: quoteCollectContacts(), paymentMethod: el("q-payment-method").value, doorOrientation: el("q-door-orientation").value, email: el("q-email").value.trim()
       };
       var priorSalesId = prior.category === "Sales" ? prior.salesContainerId : null;
@@ -3009,7 +3094,7 @@
             shipToAddress: category === "Contract Haul" ? "" : obj.shipToAddress,
             pickupAddress: category === "Contract Haul" ? obj.pickupAddress : "",
             containerType: (category === "Rental" || category === "Contract Haul") ? obj.containerType : "",
-            requestedDate: obj.requestedDate || ""
+            requestedDate: obj.requestedDate || "", dateNote: obj.dateNote || "", hardDate: !!obj.hardDate
           });
         });
       }
@@ -3055,6 +3140,7 @@
         salesSpecType: item.salesSpecType || "", salesSpecCondition: item.salesSpecCondition || "", salesSpecColor: item.salesSpecColor || "",
         pickupAddress: item.pickupAddress || "", haulAmount: item.haulAmount || 0,
         requestedDate: item.requestedDate || "", shipToAddress: item.shipToAddress || "", poNumber: po,
+        dateNote: item.dateNote || "", hardDate: !!item.hardDate,
         contacts: contacts, paymentMethod: paymentMethod, doorOrientation: item.doorOrientation != null ? item.doorOrientation : doorOrientation, email: email
       };
       state.quotes.unshift(newObj);
@@ -3106,7 +3192,7 @@
       shipToAddress: q.category === "Contract Haul" ? "" : (q.shipToAddress || ""),
       pickupAddress: q.category === "Contract Haul" ? (q.pickupAddress || "") : "",
       amount: quoteAmount(q),
-      requestedDate: q.requestedDate || "", scheduledDate: q.requestedDate || "",
+      requestedDate: q.requestedDate || "", scheduledDate: "", dateNote: q.dateNote || "", hardDate: !!q.hardDate,
       driver: "", released: false, notes: q.notes || "",
       specType: (q.category === "Sales" && !q.salesContainerId) ? (q.salesSpecType || "") : "",
       specCondition: (q.category === "Sales" && !q.salesContainerId) ? (q.salesSpecCondition || "") : "",
@@ -3400,19 +3486,22 @@
     return (c.containerType ? c.containerType + " haul from " : "Haul from ") + (c.pickupAddress || "pickup TBD");
   }
   function dispatchCardsQueue() {
-    return state.dispatchcards.filter(function (c) { return !c.scheduledDate; })
-      .sort(function (a, b) { return (a.requestedDate || "").localeCompare(b.requestedDate || ""); });
+    return state.dispatchcards.filter(function (c) { return !c.dispatcherConfirmed && !c.driverConfirmed && (!c.scheduledDate || !c.driver); })
+      .sort(function (a, b) {
+        var ad = a.requestedDate || a.scheduledDate || "9999", bd = b.requestedDate || b.scheduledDate || "9999";
+        return ad.localeCompare(bd);
+      });
   }
   function dispatchCardsForMonth(ym) {
-    return state.dispatchcards.filter(function (c) { return c.scheduledDate && monthKey(c.scheduledDate) === ym; });
+    return state.dispatchcards.filter(function (c) { return c.scheduledDate && c.driver && monthKey(c.scheduledDate) === ym; });
   }
 
   function renderDispatch(v) {
     v.innerHTML =
       '<div class="pagehead"><div><h2>Dispatch</h2><div class="sub">Approved jobs, scheduled onto drivers and dates</div></div>' +
       '<button class="btn primary" data-act="quote-add">+ New quote</button></div>' +
-      '<div class="panel"><h3>Queue<span class="count" id="dispatch-queue-count"></span></h3>' +
-      '<p class="panel-sub">Approved jobs with no date yet — assign one to put them on the calendar.</p>' +
+      '<div class="panel"><h3>Needs scheduling<span class="count" id="dispatch-queue-count"></span></h3>' +
+      '<p class="panel-sub">Approved jobs that still need a driver and a date. Click Schedule to add one to a driver\u2019s schedule, or drag a card onto a driver\u2019s day below.</p>' +
       '<div id="dispatch-queue-table"></div></div>' +
       '<div class="panel"><div class="panel-head"><div><h3>Calendar</h3><p class="panel-sub">Click a card to reassign it, reschedule it, or release it to a driver. Drag a card to move or reorder it.</p></div></div>' +
       '<div class="toolbar">' +
@@ -3430,7 +3519,6 @@
       DRIVERS.map(function (d) {
         return '<button class="chip ' + (ui.dispatchDriverFilter === d ? "on" : "") + '" data-act="dispatch-driver-filter" data-driver="' + esc(d) + '">' + esc(d) + "</button>";
       }).join("") +
-      '<button class="chip ' + (ui.dispatchDriverFilter === "unassigned" ? "on" : "") + '" data-act="dispatch-driver-filter" data-driver="unassigned">Unassigned</button>' +
       "</div>" +
       '<div id="dispatch-calendar"></div>' +
       '<div class="chips" style="margin-top:12px">' +
@@ -3676,23 +3764,38 @@
     flash("Confirmed — sent to billing");
     commit();
   }
+  function weekdayLabel(iso) {
+    if (!iso) return "";
+    var pd = parts(iso);
+    return new Date(pd.y, pd.m - 1, pd.d).toLocaleDateString("en-US", { weekday: "short" });
+  }
+  function dispatchQueueCardHtml(c) {
+    var city = dispatchPillCity(c);
+    var size = dispatchPillSize(c);
+    var dateHtml;
+    if (c.requestedDate) {
+      dateHtml = '<div class="qcard-dateval">' + esc(weekdayLabel(c.requestedDate)) + " " + esc(fmtDate(c.requestedDate)) +
+        (c.hardDate ? ' <span class="badge b-danger">HARD DATE</span>' : "") + "</div>";
+    } else {
+      dateHtml = '<div class="qcard-dateval muted">No date requested</div>';
+    }
+    var tentative = (c.scheduledDate && !c.driver) ? '<div class="qcard-note">Tentative: ' + esc(fmtDate(c.scheduledDate)) + " \u2014 needs a driver</div>" : "";
+    var noteHtml = c.dateNote ? '<div class="qcard-note"><strong>Date note:</strong> ' + esc(c.dateNote) + "</div>" : "";
+    return '<div class="qcard drag-card' + (c.hardDate ? " qcard-hard" : "") + '" draggable="true" data-id="' + esc(c.id) + '">' +
+      '<div class="qcard-top"><span class="badge ' + dispatchCatClass(c.category) + '">' + esc(c.category) + "</span>" +
+      '<span class="money">' + money(c.amount, 0) + "</span></div>" +
+      '<div class="qcard-cust">' + esc(c.customerName) + (city ? ' <span class="dcard-city">\u00B7 ' + esc(city) + "</span>" : "") + "</div>" +
+      '<div class="qcard-sum">' + (size ? esc(size) + " \u2014 " : "") + esc(dispatchCardSummary(c)) + "</div>" +
+      '<div class="qcard-date"><div class="qcard-datelbl">Requested date</div>' + dateHtml + noteHtml + tentative + "</div>" +
+      '<div class="qcard-actions"><button class="btn sm primary" data-act="dispatch-schedule" data-id="' + esc(c.id) + '">Schedule</button> ' +
+      '<button class="btn sm ghost danger" data-act="dispatch-delete-prompt" data-id="' + esc(c.id) + '">Delete</button></div></div>';
+  }
   function renderDispatchQueueTable() {
     var queue = dispatchCardsQueue();
     el("dispatch-queue-count").textContent = queue.length;
-    var rows = queue.map(function (c) {
-      return '<tr class="drag-card" draggable="true" data-id="' + esc(c.id) + '" style="cursor:grab">' +
-        '<td><span class="badge ' + dispatchCatClass(c.category) + '">' + esc(c.category) + "</span></td>" +
-        "<td>" + esc(c.customerName) + "</td>" +
-        "<td>" + esc(dispatchCardSummary(c)) + "</td>" +
-        '<td class="num money">' + money(c.amount, 0) + "</td>" +
-        '<td class="num">' + (c.requestedDate ? fmtDate(c.requestedDate) : "—") + "</td>" +
-        '<td class="right nowrap"><button class="btn sm primary" data-act="dispatch-schedule" data-id="' + esc(c.id) + '">Schedule</button> ' +
-        '<button class="btn sm ghost danger" data-act="dispatch-delete-prompt" data-id="' + esc(c.id) + '">Delete</button></td></tr>';
-    }).join("");
-    if (!queue.length) rows = '<tr><td colspan="6" class="empty-row">Nothing waiting — everything approved has a date.</td></tr>';
-    el("dispatch-queue-table").innerHTML =
-      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Type</th><th>Customer</th><th>Details</th><th>Amount</th><th>Requested date</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
-      (queue.length ? '<div class="muted" style="font-size:12px;margin-top:8px">Drag a row straight onto the calendar below to schedule it — or use the button.</div>' : "");
+    el("dispatch-queue-table").innerHTML = queue.length
+      ? '<div class="qgrid">' + queue.map(dispatchQueueCardHtml).join("") + "</div>"
+      : '<div class="empty-row" style="border:1px dashed var(--line);border-radius:8px">Nothing waiting \u2014 every approved job is on a driver\u2019s schedule.</div>';
   }
   function dispatchWeekRange(dateIso) {
     var pd = parts(dateIso);
@@ -3796,8 +3899,7 @@
     else renderDispatchMonthView();
   }
   function dispatchCardMatchesFilter(c) {
-    if (ui.dispatchDriverFilter === "all") return true;
-    if (ui.dispatchDriverFilter === "unassigned") return !c.driver;
+    if (ui.dispatchDriverFilter === "all" || ui.dispatchDriverFilter === "unassigned") return true;
     return c.driver === ui.dispatchDriverFilter;
   }
   function renderDispatchMonthView() {
@@ -3819,9 +3921,8 @@
     el("dispatch-calendar").innerHTML = '<div class="dispatch-cal">' + cells.join("") + "</div>";
   }
   function dispatchDriverLanes() {
-    var all = [{ label: "Unassigned", driver: "" }].concat(DRIVERS.map(function (d) { return { label: d, driver: d }; }));
-    if (ui.dispatchDriverFilter === "all") return all;
-    if (ui.dispatchDriverFilter === "unassigned") return all.filter(function (l) { return l.driver === ""; });
+    var all = DRIVERS.map(function (d) { return { label: d, driver: d }; });
+    if (ui.dispatchDriverFilter === "all" || ui.dispatchDriverFilter === "unassigned") return all;
     return all.filter(function (l) { return l.driver === ui.dispatchDriverFilter; });
   }
   function renderDispatchWeekView() {
@@ -3915,10 +4016,18 @@
       scanInfo +
       jobDetailFieldsHtml(card) +
       (needsContainer ? '<div class="fld"><label>Container ID</label><input class="in mono" id="confirm-container" value="' + esc(card.containerId || "") + '" placeholder="Not yet captured"></div>' : "") +
+      '<div class="fld"><label>Requested date</label>' +
+      '<div class="combo-wrap"><input type="hidden" id="dc-req" value="' + esc(card.requestedDate || "") + '">' +
+      '<input class="in" id="dc-req-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(card.requestedDate)) + '" data-act="quote-date-toggle" data-field="dc-req" style="cursor:pointer">' +
+      '<div class="combo-list cal-panel" id="dc-req-cal"></div></div>' +
+      '<input class="in" id="dc-datenote" list="date-note-opts" placeholder="Delivery date notes \u2014 e.g. ASAP, week of 10/12, waiting for info" style="margin-top:8px" value="' + esc(card.dateNote || "") + '">' +
+      '<datalist id="date-note-opts"><option value="ASAP"><option value="Week of "><option value="Specific date"><option value="Waiting for info"></datalist>' +
+      '<label class="chk-line" style="margin-top:6px"><input type="checkbox" id="dc-hard"' + (card.hardDate ? " checked" : "") + '> Hard delivery date \u2014 must happen on the requested date</label></div>' +
       '<div class="fld"><label>Scheduled date</label>' +
       '<div class="combo-wrap"><input type="hidden" id="dc-date" value="' + esc(card.scheduledDate || "") + '">' +
       '<input class="in" id="dc-date-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(card.scheduledDate)) + '" data-act="quote-date-toggle" data-field="dc-date" style="cursor:pointer">' +
       '<div class="combo-list cal-panel" id="dc-date-cal"></div></div></div>' +
+      '<div class="hard-warn" id="dc-hard-warn" style="display:none"></div>' +
       '<div class="fld"><label>Driver</label><select class="in" id="dc-driver">' + driverOpts + "</select></div>" +
       '<div class="fld"><label style="display:flex;align-items:center;gap:6px;font-weight:500;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">' +
       '<input type="checkbox" id="dc-released" style="width:auto"' + (card.released ? " checked" : "") + "> Released for driver viewing</label></div>",
@@ -3927,6 +4036,22 @@
       (scheduled ? '<button class="btn ghost" data-act="dispatch-to-queue" data-id="' + esc(card.id) + '">Move to queue</button>' : "") +
       '<button class="btn primary" data-act="dispatch-save" data-id="' + esc(card.id) + '">Save</button>');
     dispatcherRenderConfirmContacts();
+    dispatchHardWarnRefresh();
+  }
+  function hardDateConflict(hard, reqIso, schedIso) {
+    return !!(hard && reqIso && schedIso && reqIso !== schedIso);
+  }
+  function dispatchHardWarnRefresh() {
+    var w = el("dc-hard-warn");
+    if (!w) return;
+    w.removeAttribute("data-ack");
+    var req = el("dc-req").value || "", sch = el("dc-date").value || "";
+    if (hardDateConflict(el("dc-hard").checked, req, sch)) {
+      w.style.display = "block";
+      w.textContent = "\u26A0 This job has a HARD delivery date of " + fmtDate(req) + ", but you\u2019re scheduling it for " + fmtDate(sch) + ". Change the date, or click Save again to schedule it anyway.";
+    } else {
+      w.style.display = "none";
+    }
   }
   function dispatchCardSave(id) {
     var date = el("dc-date").value || "";
@@ -3934,7 +4059,14 @@
     var released = el("dc-released").checked;
     var card = dispatchCardById(id);
     if (!card) return;
-    var patch = { scheduledDate: date, driver: driver, released: released };
+    var warnEl = el("dc-hard-warn");
+    if (warnEl && warnEl.style.display !== "none" && !warnEl.getAttribute("data-ack")) {
+      warnEl.setAttribute("data-ack", "1");
+      warnEl.style.outline = "2px solid #c0392b";
+      if (warnEl.scrollIntoView) warnEl.scrollIntoView({ block: "center" });
+      return flash("Hard delivery date doesn\u2019t match \u2014 click Save again to schedule it anyway", true);
+    }
+    var patch = { scheduledDate: date, driver: driver, released: released, requestedDate: el("dc-req").value || "", dateNote: el("dc-datenote").value.trim(), hardDate: el("dc-hard").checked };
     var containerField = el("confirm-container");
     if (containerField) {
       var newContainerId = containerField.value.trim();
@@ -3948,7 +4080,7 @@
     Object.assign(patch, detailPatch);
     state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === id ? Object.assign({}, c, patch) : c; });
     closeModal();
-    flash(date ? "Scheduled for " + date + (driver ? " — " + driver : "") : "Moved to the queue");
+    flash(date && driver ? "Scheduled for " + fmtDate(date) + " \u2014 " + driver : date ? "Date saved \u2014 still needs a driver, so it stays in Needs scheduling" : "Moved to Needs scheduling");
     commit();
   }
   function dispatchMoveToQueue(id) {
@@ -3957,7 +4089,24 @@
     flash("Moved back to the queue");
     commit();
   }
+  var HARD_PENDING = null;
+  function dispatchHardGuard(card, dateIso, proceed) {
+    if (hardDateConflict(card.hardDate, card.requestedDate, dateIso) && card.scheduledDate !== dateIso) {
+      HARD_PENDING = proceed;
+      openModal("Hard delivery date \u2014 " + esc(card.customerName),
+        '<div class="hard-warn">\u26A0 This job has a HARD delivery date of ' + esc(fmtDate(card.requestedDate)) + ", but you\u2019re scheduling it for " + esc(fmtDate(dateIso)) + ".</div>" +
+        '<div class="muted">Schedule it on ' + esc(fmtDate(dateIso)) + " anyway?</div>",
+        '<button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" data-act="dispatch-hard-go">Schedule anyway</button>');
+      return;
+    }
+    proceed();
+  }
   function dispatchMoveCard(cardId, dateIso, driver) {
+    var card = dispatchCardById(cardId);
+    if (!card) return;
+    dispatchHardGuard(card, dateIso, function () { dispatchMoveCardApply(cardId, dateIso, driver); });
+  }
+  function dispatchMoveCardApply(cardId, dateIso, driver) {
     var card = dispatchCardById(cardId);
     if (!card) return;
     var patch = {}, changed = false;
@@ -3966,11 +4115,19 @@
     if (!changed) return;
     state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === cardId ? Object.assign({}, c, patch) : c; });
     var msg = "Moved to " + formatDateDisplay(dateIso);
-    if (driver !== null) msg += driver ? " — assigned to " + driver : " — unassigned";
+    var after = Object.assign({}, card, patch);
+    if (driver !== null) msg += driver ? " \u2014 assigned to " + driver : "";
+    if (!after.driver) msg += " \u2014 still needs a driver (drop it on a driver\u2019s day, or click Schedule)";
     flash(msg);
     commit();
   }
   function dispatchReorderCard(draggedId, targetId) {
+    if (draggedId === targetId) return;
+    var dragged0 = dispatchCardById(draggedId), target0 = dispatchCardById(targetId);
+    if (!dragged0 || !target0) return;
+    dispatchHardGuard(dragged0, target0.scheduledDate, function () { dispatchReorderCardApply(draggedId, targetId); });
+  }
+  function dispatchReorderCardApply(draggedId, targetId) {
     if (draggedId === targetId) return;
     var dragged = dispatchCardById(draggedId);
     var target = dispatchCardById(targetId);
@@ -4237,6 +4394,12 @@
       el(fieldId).value = t.getAttribute("data-value");
       el(fieldId + "-list").style.display = "none";
       updateAddressHint(fieldId);
+      if (el(fieldId).classList.contains("verify-addr")) verifyAddressField(fieldId);
+    },
+    "addr-use-google": function (t) {
+      var fieldId = t.getAttribute("data-field");
+      el(fieldId).value = t.getAttribute("data-value");
+      verifyAddressField(fieldId);
     },
     "quote-lineitem-edit": function (t) { quoteEditLineItem(t.getAttribute("data-index")); },
     "quote-lineitem-remove": function (t) { quoteRemoveLineItem(t.getAttribute("data-index")); },
@@ -4246,6 +4409,7 @@
     "quote-date-nextmonth": function (t) { quoteDateShiftMonth(t.getAttribute("data-field"), 1); },
     "quote-date-clear": function (t) { quoteDateClear(t.getAttribute("data-field")); },
     "quote-date-today": function (t) { quoteDateToday(t.getAttribute("data-field")); },
+    "dispatch-hard-go": function () { var f = HARD_PENDING; HARD_PENDING = null; closeModal(); if (f) f(); },
     "dispatch-schedule": function (t) { dispatchCardModal(dispatchCardById(t.getAttribute("data-id"))); },
     "dispatch-manage": function (t) { dispatchCardModal(dispatchCardById(t.getAttribute("data-id"))); },
     "dispatch-save": function (t) { dispatchCardSave(t.getAttribute("data-id")); },
@@ -4349,6 +4513,13 @@
     }
   });
 
+  document.addEventListener("focusout", function (e) {
+    if (e.target.classList && e.target.classList.contains("verify-addr")) {
+      var id = e.target.id;
+      setTimeout(function () { var f = el(id); if (f && document.activeElement !== f) verifyAddressField(id); }, 400);
+    }
+  });
+
   document.addEventListener("focusin", function (e) {
     if (e.target.id === "r-cont-search") renderContainerCombo(e.target.value);
     else if (e.target.id === "r-cust-search") renderCustomerCombo(e.target.value);
@@ -4365,6 +4536,7 @@
 
     else if (e.target.classList.contains("coll-stage-select")) { setCollectionStage(e.target.getAttribute("data-id"), e.target.value); renderCollections(el("view")); }
     else if (e.target.id === "q-category") { quoteShowGroup(e.target.value); }
+    else if (e.target.id === "dc-hard") { dispatchHardWarnRefresh(); }
     else if (e.target.id === "q-cust-account" || e.target.id === "q-cust-search") {
       if (!el("q-customer").value) {
         var tv = e.target.value.trim().toLowerCase();
