@@ -2565,9 +2565,8 @@
       '<div class="fld"><label>PO # (optional)</label><input class="in" id="q-po" value="' + esc(q.poNumber) + '"' + dis + "></div>" +
       '<div class="fld"><label>Notes</label><textarea class="in" id="q-notes" rows="2"' + dis + '>' + esc(q.notes) + "</textarea></div>" +
       (editing ? "" : '<div class="fld" id="q-add-row"><label>Add this container' + '</label><div style="display:flex;gap:8px;align-items:center">' +
-        '<input class="in mono" id="q-lineitem-qty" type="number" min="1" value="1" style="width:80px" title="Quantity">' +
         '<button type="button" class="btn sm ghost" id="q-lineitem-add-btn" data-act="quote-lineitem-add" style="flex:1">+ Add to quote</button></div>' +
-        '<div class="muted" style="font-size:12px;margin-top:4px">Set a quantity to add several identical containers at once. Each becomes its own dispatch job — edit any single one afterward if it needs a different date or detail.</div></div>')
+        '</div>')
     );
     var footHtml = (
       '<button class="btn" data-act="modal-close">Cancel</button>' +
@@ -2656,7 +2655,7 @@
       '<div class="row2"><div class="fld">' + lab("Requested delivery date") + '<div class="combo-wrap"><input type="hidden" id="qs-date-' + n + '" value="' + esc(v.date) + '">' +
       '<input class="in" id="qs-date-' + n + '-display" readonly placeholder="Click to pick a date" value="' + esc(formatDateDisplay(v.date)) + '" data-act="quote-date-toggle" data-field="qs-date-' + n + '" style="cursor:pointer">' +
       '<div class="combo-list cal-panel" id="qs-date-' + n + '-cal"></div></div></div>' +
-      '<div class="fld">' + lab("Quantity (identical containers)") + '<input class="in mono" id="qs-qty-' + n + '" type="number" min="1" value="' + esc(v.qty || 1) + '"></div></div>' +
+      '<div></div></div>' +
       "</div>";
   }
   function quoteSectionRead(n) {
@@ -2664,7 +2663,7 @@
     return {
       category: "Rental", containerType: g("qs-type-"), monthlyRate: Number(g("qs-rate-")) || 0, serviceFee: Number(g("qs-fee-")) || 0,
       shipToAddress: g("qs-ship-").trim(), requestedDate: g("qs-date-") || "", doorOrientation: g("qs-door-"),
-      qty: Math.max(1, Number(g("qs-qty-")) || 1)
+      qty: 1
     };
   }
   function quoteSectionFill(n, v) {
