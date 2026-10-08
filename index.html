@@ -220,22 +220,17 @@
       <div class="savenote" id="savenote"></div>
     </div>
     <nav class="tabs" id="tabs">
-      <button data-act="tab" data-tab="dashboard">Dashboard</button>
-      <button data-act="tab" data-tab="fleet">Fleet</button>
+      <button data-act="tab" data-tab="inventory">Inventory</button>
       <button data-act="tab" data-tab="customers">Customers</button>
       <button data-act="tab" data-tab="rentals">Rentals</button>
       <button data-act="tab" data-tab="billing">Billing</button>
       <button data-act="tab" data-tab="collections">Collections</button>
       <button data-act="tab" data-tab="haul">Contract Haul</button>
-      <button data-act="tab" data-tab="sales-inv">Sales Inventory</button>
       <button data-act="tab" data-tab="new-quote">New Quote</button>
       <button data-act="tab" data-tab="quotes">Quotes</button>
       <button data-act="tab" data-tab="dispatch">Dispatch</button>
       <button data-act="tab" data-tab="confirmations">Needs Confirmation</button>
-      <button data-act="tab" data-tab="sales-billing">Sales Billing</button>
-      <button data-act="tab" data-tab="completed-jobs">Completed Jobs</button>
       <button data-act="tab" data-tab="rate-card">Rate Card</button>
-      <button data-act="tab" data-tab="driver-access">Driver Access</button>
     </nav>
   </header>
   <main id="view"></main>
@@ -291,16 +286,17 @@
 
   /* ------------------------- state ------------------------- */
   var state = { containers: [], customers: [], rentals: [], invoices: [], collections: [], hauls: [], salescontainers: [], quotes: [], dispatchcards: [], profiles: [], salesinvoices: [], ratecards: [] };
-  var VALID_TABS = ["dashboard", "fleet", "customers", "rentals", "billing", "collections", "haul", "sales-inv", "new-quote", "quotes", "dispatch", "confirmations", "sales-billing", "completed-jobs", "rate-card", "driver-access"];
+  var VALID_TABS = ["inventory", "customers", "rentals", "billing", "collections", "haul", "new-quote", "quotes", "dispatch", "confirmations", "rate-card"];
   function lastTabOrDefault() {
     try {
       var saved = window.localStorage.getItem("wms-tracker-last-tab");
-      return (saved && VALID_TABS.indexOf(saved) !== -1) ? saved : "dashboard";
-    } catch (e) { return "dashboard"; }
+      if (saved === "fleet" || saved === "sales-inv") saved = "inventory";
+      return (saved && VALID_TABS.indexOf(saved) !== -1) ? saved : "rentals";
+    } catch (e) { return "rentals"; }
   }
   var ui = {
     tab: lastTabOrDefault(),
-    fleetQ: "", fleetFilter: "All", fleetType: "",
+    fleetQ: "", fleetFilter: "All", fleetType: "", invView: "rental",
     custQ: "",
     rentalView: "active", rentalQ: "",
     billMonth: nowMonth(), billingExpandRentalId: null, billingCollapsed: {},
@@ -857,7 +853,7 @@
     state.invoices = [];
     state.collections = REAL_COLLECTIONS.slice().map(migrateCollectionRecord);
     state.hauls = REAL_CONTRACT_HAUL.slice();
-    ui.tab = "dashboard";
+    ui.tab = "rentals";
     flash("Loaded " + state.customers.length + " customers, " + state.containers.length + " units, " + state.rentals.length + " rental records, " + state.hauls.length + " haul jobs");
     commit();
   }
@@ -911,27 +907,22 @@
         "<p>Load your real rental log data to get started, or add records by hand.</p>" +
         '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">' +
         '<button class="btn primary" data-act="load-sample">Load Western Mobile Storage rental data</button>' +
-        '<button class="btn" data-act="tab" data-tab="fleet">Add my first container</button>' +
+        '<button class="btn" data-act="tab" data-tab="inventory">Add my first container</button>' +
         "</div></div>";
       return;
     }
 
-    if (ui.tab === "dashboard") renderDashboard(v);
-    else if (ui.tab === "fleet") renderFleet(v);
+    if (ui.tab === "inventory") renderInventory(v);
     else if (ui.tab === "customers") renderCustomers(v);
     else if (ui.tab === "rentals") renderRentals(v);
     else if (ui.tab === "billing") renderBilling(v);
     else if (ui.tab === "collections") renderCollections(v);
     else if (ui.tab === "haul") renderHaul(v);
-    else if (ui.tab === "sales-inv") renderSalesInv(v);
     else if (ui.tab === "new-quote") renderNewQuote(v);
     else if (ui.tab === "quotes") renderQuotes(v);
     else if (ui.tab === "dispatch") renderDispatch(v);
     else if (ui.tab === "confirmations") renderConfirmations(v);
-    else if (ui.tab === "sales-billing") renderSalesBilling(v);
-    else if (ui.tab === "completed-jobs") renderCompletedJobs(v);
     else if (ui.tab === "rate-card") renderRateCard(v);
-    else if (ui.tab === "driver-access") renderDriverAccess(v);
 
     v.insertAdjacentHTML("beforeend",
       '<div style="margin-top:28px;display:flex;justify-content:flex-end">' +
@@ -989,6 +980,15 @@
   }
 
   /* ----------------------------- fleet ----------------------------- */
+  function renderInventory(v) {
+    var sales = ui.invView === "sales";
+    v.innerHTML =
+      '<div class="chips" style="margin-bottom:14px">' +
+      '<button class="chip ' + (!sales ? "on" : "") + '" data-act="inv-view" data-view="rental">Rental fleet <span class="count">' + state.containers.length + '</span></button>' +
+      '<button class="chip ' + (sales ? "on" : "") + '" data-act="inv-view" data-view="sales">Sales fleet <span class="count">' + state.salescontainers.length + '</span></button>' +
+      '</div><div id="inv-body"></div>';
+    if (sales) renderSalesInv(el("inv-body")); else renderFleet(el("inv-body"));
+  }
   function renderFleet(v) {
     v.innerHTML =
       '<div class="pagehead"><div><h2>Fleet<span class="count">' + state.containers.length + ' units</span></h2>' +
@@ -4476,6 +4476,7 @@
     "haul-po-toggle-billed": function (t) { haulToggleBilledForPO(t.getAttribute("data-po")); },
     "haul-filter": function (t) { ui.haulFilter = t.getAttribute("data-filter"); render(); },
     "sales-bill-filter": function (t) { ui.salesBillFilter = t.getAttribute("data-filter"); render(); },
+    "inv-view": function (t) { ui.invView = t.getAttribute("data-view"); render(); },
     "completed-jobs-filter": function (t) { ui.completedJobsCatFilter = t.getAttribute("data-filter"); render(); },
     "ratecard-save": function (t) { ratecardSave(t.getAttribute("data-type"), t.getAttribute("data-idx")); },
     "sales-bill-toggle": function (t) { salesInvoiceToggleBilled(t.getAttribute("data-id")); },
