@@ -2667,6 +2667,10 @@
         '<div id="q-rental-sections"></div>' +
         '<div class="csec-actions"><button type="button" class="btn sm ghost" data-act="qsec-add">+ Add another container</button>' +
         '<button type="button" class="btn sm ghost" data-act="qsec-add-copy">+ Add another container (copy of previous)</button></div></div>') +
+      (editing ? "" : '<div class="quote-group" id="q-haul-sections-wrap" style="display:none">' +
+        '<div id="q-haul-sections"></div>' +
+        '<div class="csec-actions"><button type="button" class="btn sm ghost" data-act="qh-add">+ Add another container</button>' +
+        '<button type="button" class="btn sm ghost" data-act="qh-add-copy">+ Add another container (copy of previous)</button></div></div>') +
       (editing ? "" : '<div class="quote-group" id="q-sales-sections-wrap" style="display:none">' +
         '<div id="q-sales-sections"></div>' +
         '<div class="csec-actions"><button type="button" class="btn sm ghost" data-act="qx-add">+ Add another container</button>' +
@@ -2781,6 +2785,7 @@
     if (fresh) {
       QS_SEQ = 0; quoteAddSection(false);
       QX_SEQ = 0; qxAddSection(false);
+      QH_SEQ = 0; qhAddSection(false);
       quoteShowGroup(el("q-category").value);
       renderQuoteLineItemsList();
       renderQuoteContactsList();
@@ -2795,14 +2800,18 @@
     var secWrap = el("q-rental-sections-wrap");
     var salesWrap = el("q-sales-sections-wrap");
     var salesSec = !!salesWrap && cat === "Sales";
-    var secMode = (!!secWrap && cat === "Rental") || salesSec;
+    var haulWrap = el("q-haul-sections-wrap");
+    var haulSec = !!haulWrap && cat === "Contract Haul";
+    var secMode = (!!secWrap && cat === "Rental") || salesSec || haulSec;
+    if (haulWrap) haulWrap.style.display = haulSec ? "grid" : "none";
+    if (haulSec && el("q-group-haul")) el("q-group-haul").style.display = "none";
     if (secWrap) secWrap.style.display = (!!secWrap && cat === "Rental") ? "grid" : "none";
     if (salesWrap) salesWrap.style.display = salesSec ? "grid" : "none";
     if (salesSec && el("q-group-sales")) el("q-group-sales").style.display = "none";
     if (salesSec) qxRefreshAll();
     ["q-reqdate-fld", "q-door-fld", "q-add-row", "q-lineitems-wrap"].forEach(function (id) {
       var e2 = el(id); if (!e2) return;
-      if (secMode && !(salesSec && id === "q-door-fld")) e2.style.display = "none";
+      if (secMode && !(salesSec && id === "q-door-fld") && !(haulSec && id === "q-door-fld")) e2.style.display = "none";
       else if (id === "q-lineitems-wrap") renderQuoteLineItemsList();
       else e2.style.display = "";
     });
@@ -2952,6 +2961,88 @@
     return { items: out, badIndex: bad, badMsg: msg };
   }
 
+
+  /* ---- contract haul quote: per-container sections ---- */
+  var QH_SEQ = 0;
+  function qhSectionHtml(n, v) {
+    function lab(t) { return "<label>" + t + "</label>"; }
+    function addr(id, label, val) {
+      return '<div class="fld">' + lab(label) + '<div class="combo-wrap"><input class="in addr-input verify-addr" id="' + id + '" value="' + esc(val) + '"><div class="combo-list" id="' + id + '-list"></div></div><div class="subline" id="' + id + '-hint" style="color:var(--warn)"></div></div>';
+    }
+    return '<div class="csec" data-n="' + n + '">' +
+      '<div class="csec-head"><strong class="csec-title">Container</strong><span class="csec-tools">' +
+      '<button type="button" class="btn sm ghost csec-copybtn" data-act="qh-copy" data-n="' + n + '">Copy from previous</button> ' +
+      '<button type="button" class="btn sm ghost danger csec-rmbtn" data-act="qh-remove" data-n="' + n + '">Remove</button></span></div>' +
+      '<div class="row2"><div class="fld">' + lab("Container size") + '<select class="in" id="qh-type-' + n + '">' + opt(TYPES, v.type) + "</select></div>" +
+      '<div class="fld">' + lab("Haul amount ($)") + '<input class="in mono" id="qh-amount-' + n + '" type="number" min="0" value="' + esc(v.amount) + '"></div></div>' +
+      addr("qh-pickup-" + n, "Pick-up address", v.pickup) +
+      addr("qh-ship-" + n, "Ship-to / delivery address", v.ship) +
+      dateTimingHtml({ type: "qh-dtype-" + n, date: "qh-date-" + n, hard: "qh-hard-" + n, note: "qh-datenote-" + n }, { dateType: v.dateType, requestedDate: v.date, hardDate: v.hardDate, dateNote: v.dateNote }) +
+      "</div>";
+  }
+  function qhRead(n) {
+    var g = function (id) { var e2 = el(id + n); return e2 ? e2.value : ""; };
+    return Object.assign({
+      category: "Contract Haul", containerType: g("qh-type-"), haulAmount: Number(g("qh-amount-")) || 0,
+      pickupAddress: g("qh-pickup-").trim(), shipToAddress: g("qh-ship-").trim(), qty: 1
+    }, timingReadFields({ type: "qh-dtype-" + n, date: "qh-date-" + n, hard: "qh-hard-" + n, note: "qh-datenote-" + n }));
+  }
+  function qhFill(n, v) {
+    var set = function (id, val) { var e2 = el(id + n); if (e2) e2.value = val == null ? "" : val; };
+    set("qh-type-", v.containerType); set("qh-amount-", v.haulAmount || ""); set("qh-pickup-", v.pickupAddress); set("qh-ship-", v.shipToAddress);
+    timingFillFields({ type: "qh-dtype-" + n, date: "qh-date-" + n, hard: "qh-hard-" + n, note: "qh-datenote-" + n }, v);
+  }
+  function qhRelabel() {
+    var secs = document.querySelectorAll("#q-haul-sections .csec");
+    Array.prototype.forEach.call(secs, function (sec, i) {
+      sec.querySelector(".csec-title").textContent = "Container " + (i + 1) + (secs.length > 1 ? " of " + secs.length : "");
+      sec.querySelector(".csec-copybtn").style.display = i === 0 ? "none" : "";
+      sec.querySelector(".csec-rmbtn").style.display = secs.length === 1 ? "none" : "";
+    });
+  }
+  function qhAddSection(copyPrev) {
+    var host = el("q-haul-sections");
+    if (!host) return;
+    var secs = host.querySelectorAll(".csec");
+    var v;
+    if (copyPrev && secs.length) {
+      var p = qhRead(secs[secs.length - 1].getAttribute("data-n"));
+      v = { type: p.containerType, amount: p.haulAmount || "", pickup: p.pickupAddress, ship: p.shipToAddress, date: p.requestedDate, dateType: p.dateType, dateNote: p.dateNote, hardDate: p.hardDate };
+    } else v = { type: TYPES[0], amount: "", pickup: "", ship: "", date: "" };
+    QH_SEQ++;
+    host.insertAdjacentHTML("beforeend", qhSectionHtml(QH_SEQ, v));
+    qhRelabel();
+    var added = host.lastElementChild;
+    if (secs.length && added.scrollIntoView) added.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function qhCopyPrev(n) {
+    var sec = document.querySelector('#q-haul-sections .csec[data-n="' + n + '"]');
+    var prev = sec && sec.previousElementSibling;
+    if (!prev) return flash("No previous container to copy from");
+    qhFill(n, qhRead(prev.getAttribute("data-n")));
+    flash("Copied from the previous container");
+  }
+  function qhRemove(n) {
+    var secs = document.querySelectorAll("#q-haul-sections .csec");
+    if (secs.length <= 1) return;
+    var sec = document.querySelector('#q-haul-sections .csec[data-n="' + n + '"]');
+    if (sec) sec.parentNode.removeChild(sec);
+    qhRelabel();
+  }
+  function qhItems() {
+    var out = [], bad = null, msg = "";
+    Array.prototype.forEach.call(document.querySelectorAll("#q-haul-sections .csec"), function (sec, i) {
+      var it = qhRead(sec.getAttribute("data-n"));
+      var any = it.haulAmount > 0 || it.pickupAddress || it.shipToAddress || it.dateNote || it.dateType;
+      if (!any && document.querySelectorAll("#q-haul-sections .csec").length > 1) return;
+      function fail(m) { if (bad === null) { bad = i + 1; msg = "Container " + (i + 1) + ": " + m; } }
+      if (!it.pickupAddress) return fail("enter the pick-up address");
+      if (!(it.haulAmount > 0)) return fail("enter the haul amount");
+      if ((it.dateType === "Specific Date" || it.dateType === "Week of") && !it.requestedDate) return fail("pick the " + (it.dateType === "Week of" ? "week" : "date") + " (or change the timing)");
+      out.push(it);
+    });
+    return { items: out, badIndex: bad, badMsg: msg };
+  }
   /* ---- sales quote: criteria-driven container sections ---- */
   var QX_SEQ = 0;
   var QX_DRIVER = "__DRIVER__";
@@ -3395,7 +3486,7 @@
           if (c.id !== linkedCard.id) return c;
           return Object.assign({}, c, {
             amount: quoteAmount(obj),
-            shipToAddress: category === "Contract Haul" ? "" : obj.shipToAddress,
+            shipToAddress: obj.shipToAddress,
             pickupAddress: category === "Contract Haul" ? obj.pickupAddress : "",
             containerType: (category === "Rental" || category === "Contract Haul") ? obj.containerType : "",
             requestedDate: obj.requestedDate || "", dateType: obj.dateType || "", dateNote: obj.dateNote || "", hardDate: !!obj.hardDate
@@ -3416,6 +3507,11 @@
       if (sr.badIndex !== null) return flash(sr.badMsg, true);
       items = sr.items;
       if (!items.length) return flash("Fill in at least one container (monthly rate) before saving");
+    } else if (category === "Contract Haul" && el("q-haul-sections")) {
+      var hr = qhItems();
+      if (hr.badIndex !== null) return flash(hr.badMsg, true);
+      items = hr.items;
+      if (!items.length) return flash("Fill in at least one container (pick-up address and haul amount) before saving");
     } else if (category === "Sales" && el("q-sales-sections")) {
       var xr = qxItems();
       if (xr.badIndex !== null) return flash(xr.badMsg, true);
@@ -3498,7 +3594,7 @@
       customerId: q.customerId, customerName: q.customerName,
       containerId: q.category === "Sales" ? (q.salesContainerId || "") : "",
       containerType: (q.category === "Rental" || q.category === "Contract Haul") ? (q.containerType || "") : "",
-      shipToAddress: q.category === "Contract Haul" ? "" : (q.shipToAddress || ""),
+      shipToAddress: q.shipToAddress || "",
       pickupAddress: q.category === "Contract Haul" ? (q.pickupAddress || "") : "",
       amount: quoteAmount(q),
       requestedDate: q.requestedDate || "", scheduledDate: "", dateType: q.dateType || "", dateNote: q.dateNote || "", hardDate: !!q.hardDate,
@@ -3808,7 +3904,7 @@
       var specLabel = c.containerId ? c.containerId : ("Driver\u2019s choice: " + ([c.specType, c.specCondition, c.specColor].filter(Boolean).join(", ") || "any container"));
       return specLabel + " sale to " + (c.shipToAddress || "address TBD");
     }
-    return (c.containerType ? c.containerType + " haul from " : "Haul from ") + (c.pickupAddress || "pickup TBD");
+    return (c.containerType ? c.containerType + " haul from " : "Haul from ") + (c.pickupAddress || "pickup TBD") + (c.shipToAddress ? " to " + c.shipToAddress : "");
   }
   function dispatchCardsQueue() {
     return state.dispatchcards.filter(function (c) { return !c.dispatcherConfirmed && !c.driverConfirmed && (!c.scheduledDate || !c.driver); })
@@ -3998,7 +4094,7 @@
     }
     var amount = card.category === "Sales" ? salePrice : card.category === "Contract Haul" ? haulAmount : (monthlyRate + serviceFee);
     return {
-      shipToAddress: card.category === "Contract Haul" ? "" : shipTo,
+      shipToAddress: shipTo,
       pickupAddress: card.category === "Contract Haul" ? pickupAddress : "",
       containerType: (card.category === "Rental Delivery" || card.category === "Contract Haul") ? containerType : "",
       amount: amount
@@ -4109,7 +4205,7 @@
     return c.specType || "";
   }
   function dispatchQueueRowHtml(c) {
-    var addr = c.category === "Contract Haul" ? (c.pickupAddress || c.shipToAddress) : (c.shipToAddress || c.pickupAddress);
+    var addr = c.category === "Contract Haul" ? ((c.pickupAddress && c.shipToAddress) ? c.pickupAddress + " \u2192 " + c.shipToAddress : (c.pickupAddress || c.shipToAddress)) : (c.shipToAddress || c.pickupAddress);
     var dateHtml;
     if (c.dateType === "ASAP") dateHtml = '<span class="badge b-danger">ASAP</span>';
     else if (c.dateType === "TBD") dateHtml = '<span class="badge b-off">TBD</span>';
@@ -4778,6 +4874,10 @@
       if (c) { wrap.style.display = ""; disp.textContent = money(c.bookValue, 0); } else { wrap.style.display = "none"; }
     },
     "quote-lineitem-add": function () { quoteAddLineItem(); },
+    "qh-add": function () { qhAddSection(false); },
+    "qh-add-copy": function () { qhAddSection(true); },
+    "qh-copy": function (t) { qhCopyPrev(t.getAttribute("data-n")); },
+    "qh-remove": function (t) { qhRemove(t.getAttribute("data-n")); },
     "qx-add": function () { qxAddSection(false); },
     "qx-add-copy": function () { qxAddSection(true); },
     "qx-copy": function (t) { qxCopyPrev(t.getAttribute("data-n")); },
