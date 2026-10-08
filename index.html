@@ -620,7 +620,8 @@
     var bar = el("savenote");
     if (AUTH.state === "logged-in") {
       var roleTag = AUTH.role === "driver" ? " — driver" + (AUTH.driverName ? " (" + esc(AUTH.driverName) + ")" : "") : "";
-      bar.innerHTML = "Signed in as " + esc(AUTH.email) + roleTag + "&nbsp;&nbsp;·&nbsp;&nbsp;" +
+      var nq = AUTH.role === "driver" ? "" : '<button class="btn sm" style="background:#fff;color:var(--primary);border-color:#fff;font-weight:650;margin-right:14px" data-act="tab" data-tab="new-quote">+ New Quote</button>';
+      bar.innerHTML = nq + "Signed in as " + esc(AUTH.email) + roleTag + "&nbsp;&nbsp;·&nbsp;&nbsp;" +
         '<button class="btn sm ghost" style="color:#fff;border-color:rgba(255,255,255,.45)" data-act="auth-signout">Sign out</button>';
     } else {
       bar.textContent = AUTH.state === "not-configured" ? "Supabase isn't connected yet — see instructions below." : "";
