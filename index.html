@@ -109,6 +109,16 @@
   .csec { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:#f7f9f5; display:grid; gap:10px; }
   .csec-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .csec-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .qx-stats { display:flex; gap:8px; flex-wrap:wrap; margin:0; }
+  .qx-stat { border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 10px; font-size:12px; color:var(--muted); }
+  .qx-stat strong { display:block; font-size:15px; color:var(--ink); font-family:ui-monospace,Menlo,monospace; }
+  .qx-list { max-height:280px; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .qx-list table { width:100%; border-collapse:collapse; font-size:13px; }
+  .qx-list th { position:sticky; top:0; background:var(--surface-2,#f1f4ee); text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); padding:6px 8px; }
+  .qx-list td { padding:6px 8px; border-top:1px solid var(--line); }
+  .qx-list tr.qx-sel td { background:#e3f3e6; }
+  .qx-list tr.qx-off td { opacity:.45; }
+  .qx-list tr.qx-driver td { background:#fff8e6; }
   #q-rental-sections-wrap { display:grid; gap:8px; }
   .tablewrap { border:1px solid var(--line); border-radius:10px; background:#fff; overflow-x:auto; }
   table.tbl { width:100%; border-collapse:collapse; font-size:13px; }
@@ -2485,14 +2495,14 @@
           '<button class="btn sm ghost danger" data-act="quote-delete" data-id="' + esc(q.id) + '">Delete</button>';
       }
       var salesCont = q.category === "Sales" ? salesContainerById(q.salesContainerId) : null;
-      var sizeDisplay = q.category === "Sales" ? (salesCont ? salesCont.type : "—") : (q.category === "Rental" || q.category === "Contract Haul") ? (q.containerType || "—") : "—";
+      var sizeDisplay = q.category === "Sales" ? (salesCont ? salesCont.type : (q.salesSpecType ? q.salesSpecType + " (driver\u2019s choice)" : "—")) : (q.category === "Rental" || q.category === "Contract Haul") ? (q.containerType || "—") : "—";
       var siblings = quoteSiblings(q);
       return "<tr>" +
         '<td class="cid">' + esc(q.quoteNumber) + (siblings.length ? '<div class="subline"><a href="#" data-act="quote-batch-view" data-batch="' + esc(q.batchId) + '" data-id="' + esc(q.id) + '" style="color:var(--primary-2);font-weight:600">View all ' + (siblings.length + 1) + " items</a></div>" : "") + "</td>" +
         "<td>" + esc(q.customerName) + "</td>" +
         '<td><span class="badge ' + quoteCatBadgeClass(q.category) + '">' + esc(q.category) + "</span></td>" +
         "<td>" + esc(sizeDisplay) + "</td>" +
-        "<td>" + (salesCont ? esc(salesCont.condition) : "—") + "</td>" +
+        "<td>" + (salesCont ? esc(salesCont.condition) : (q.category === "Sales" && q.salesSpecCondition ? esc(q.salesSpecCondition) : "—")) + "</td>" +
         '<td class="num">' + (q.requestedDate ? fmtDate(q.requestedDate) : "—") + "</td>" +
         '<td class="num money">' + money(quoteAmount(q), 0) + "</td>" +
         "<td>" + (q.status === "Approved" ? badge("Approved") : q.status === "Declined" ? badge("Out of Service") : badge("Draft")) + "</td>" +
@@ -2612,6 +2622,10 @@
         '<div id="q-rental-sections"></div>' +
         '<div class="csec-actions"><button type="button" class="btn sm ghost" data-act="qsec-add">+ Add another container</button>' +
         '<button type="button" class="btn sm ghost" data-act="qsec-add-copy">+ Add another container (copy of previous)</button></div></div>') +
+      (editing ? "" : '<div class="quote-group" id="q-sales-sections-wrap" style="display:none">' +
+        '<div id="q-sales-sections"></div>' +
+        '<div class="csec-actions"><button type="button" class="btn sm ghost" data-act="qx-add">+ Add another container</button>' +
+        '<button type="button" class="btn sm ghost" data-act="qx-add-copy">+ Add another container (copy of previous)</button></div></div>') +
       (editing ? '<div class="quote-group" id="q-group-rental">' : '<div class="quote-group" id="q-group-rental-legacy" style="display:none">') +
       '<div class="row2"><div class="fld"><label>Container type needed</label><select class="in" id="q-container-type"' + dis + '>' + opt(TYPES, q.containerType || TYPES[0]) + "</select></div>" +
       '<div class="fld"><label>Monthly rate ($)</label><input class="in mono" id="q-monthly-rate" type="number" min="0" value="' + esc(editing ? q.monthlyRate : ((rateForType(q.containerType || TYPES[0]) || {}).monthlyRate || "")) + '"' + dis + "></div></div>" +
@@ -2721,6 +2735,7 @@
     v.appendChild(QF_NODE);
     if (fresh) {
       QS_SEQ = 0; quoteAddSection(false);
+      QX_SEQ = 0; qxAddSection(false);
       quoteShowGroup(el("q-category").value);
       renderQuoteLineItemsList();
       renderQuoteContactsList();
@@ -2733,11 +2748,16 @@
       if (elg) elg.style.display = slug === quoteCatSlug(cat) ? "grid" : "none";
     });
     var secWrap = el("q-rental-sections-wrap");
-    var secMode = !!secWrap && cat === "Rental";
-    if (secWrap) secWrap.style.display = secMode ? "grid" : "none";
+    var salesWrap = el("q-sales-sections-wrap");
+    var salesSec = !!salesWrap && cat === "Sales";
+    var secMode = (!!secWrap && cat === "Rental") || salesSec;
+    if (secWrap) secWrap.style.display = (!!secWrap && cat === "Rental") ? "grid" : "none";
+    if (salesWrap) salesWrap.style.display = salesSec ? "grid" : "none";
+    if (salesSec && el("q-group-sales")) el("q-group-sales").style.display = "none";
+    if (salesSec) qxRefreshAll();
     ["q-reqdate-fld", "q-door-fld", "q-add-row", "q-lineitems-wrap"].forEach(function (id) {
       var e2 = el(id); if (!e2) return;
-      if (secMode) e2.style.display = "none";
+      if (secMode && !(salesSec && id === "q-door-fld")) e2.style.display = "none";
       else if (id === "q-lineitems-wrap") renderQuoteLineItemsList();
       else e2.style.display = "";
     });
@@ -2883,6 +2903,165 @@
         for (var k = 0; k < it.qty; k++) out.push(Object.assign({}, it));
       }
       else if (it.serviceFee > 0 || it.shipToAddress || it.requestedDate || it.doorOrientation || it.dateNote || it.dateType) { if (bad === null) { bad = i + 1; msg = "Container " + (i + 1) + " needs a monthly rate"; } }
+    });
+    return { items: out, badIndex: bad, badMsg: msg };
+  }
+
+  /* ---- sales quote: criteria-driven container sections ---- */
+  var QX_SEQ = 0;
+  var QX_DRIVER = "__DRIVER__";
+  function qxCrit(n) {
+    var g = function (id) { var e2 = el(id + n); return e2 ? e2.value : ""; };
+    return { type: g("qx-type-"), cond: g("qx-cond-"), color: g("qx-color-").trim().toLowerCase() };
+  }
+  function qxMatching(crit) {
+    return state.salescontainers.filter(function (c) {
+      if (c.status !== "Available") return false;
+      if (crit.type && c.type !== crit.type) return false;
+      if (crit.cond && c.condition !== crit.cond) return false;
+      if (crit.color && (c.color || "").trim().toLowerCase().indexOf(crit.color) === -1) return false;
+      return true;
+    }).sort(function (a, b) { return (Number(a.bookValue) || 0) - (Number(b.bookValue) || 0); });
+  }
+  function qxPicksElsewhere(n) {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll("#q-sales-sections .csec"), function (sec) {
+      var m = sec.getAttribute("data-n");
+      if (String(m) === String(n)) return;
+      var v = el("qx-pick-" + m).value;
+      if (v && v !== QX_DRIVER) out[v] = m;
+    });
+    return out;
+  }
+  function qxSectionHtml(n, v) {
+    function lab(t) { return "<label>" + t + "</label>"; }
+    return '<div class="csec" data-n="' + n + '">' +
+      '<div class="csec-head"><strong class="csec-title">Container</strong><span class="csec-tools">' +
+      '<button type="button" class="btn sm ghost csec-copybtn" data-act="qx-copy" data-n="' + n + '">Copy from previous</button> ' +
+      '<button type="button" class="btn sm ghost danger csec-rmbtn" data-act="qx-remove" data-n="' + n + '">Remove</button></span></div>' +
+      '<div class="row2"><div class="fld">' + lab("Size") + '<select class="in qx-crit" id="qx-type-' + n + '" data-n="' + n + '">' + opt(TYPES, v.type) + "</select></div>" +
+      '<div class="fld">' + lab("Condition") + '<select class="in qx-crit" id="qx-cond-' + n + '" data-n="' + n + '">' + opt([{ v: "", t: "Any condition" }].concat(SALES_CONDITIONS), v.cond) + "</select></div></div>" +
+      '<div class="fld">' + lab("Color (optional)") + '<input class="in qx-crit" id="qx-color-' + n + '" data-n="' + n + '" placeholder="e.g. blue" value="' + esc(v.color || "") + '"></div>' +
+      '<input type="hidden" id="qx-pick-' + n + '" value="' + esc(v.pick || "") + '">' +
+      '<div class="qx-stats" id="qx-stats-' + n + '"></div>' +
+      '<div class="qx-list" id="qx-list-' + n + '"></div>' +
+      '<div class="fld">' + lab("Sale price ($)") + '<input class="in mono" id="qx-price-' + n + '" type="number" min="0" value="' + esc(v.price || "") + '"><div class="subline" id="qx-pricehint-' + n + '"></div></div>' +
+      '<div class="fld">' + lab("Ship-to / delivery address") + '<div class="combo-wrap"><input class="in addr-input verify-addr" id="qx-ship-' + n + '" value="' + esc(v.ship) + '"><div class="combo-list" id="qx-ship-' + n + '-list"></div></div><div class="subline" id="qx-ship-' + n + '-hint" style="color:var(--warn)"></div></div>' +
+      dateTimingHtml({ type: "qx-dtype-" + n, date: "qx-date-" + n, hard: "qx-hard-" + n, note: "qx-datenote-" + n }, { dateType: v.dateType, requestedDate: v.date, hardDate: v.hardDate, dateNote: v.dateNote }) +
+      "</div>";
+  }
+  function qxRefresh(n) {
+    if (!el("qx-pick-" + n)) return;
+    var crit = qxCrit(n), all = qxMatching(crit), taken = qxPicksElsewhere(n);
+    var pick = el("qx-pick-" + n).value;
+    if (pick && pick !== QX_DRIVER && !all.some(function (c) { return c.id === pick && !taken[c.id]; })) { pick = ""; el("qx-pick-" + n).value = ""; }
+    var prices = all.map(function (c) { return Number(c.bookValue) || 0; });
+    var lo = prices.length ? Math.min.apply(null, prices) : 0, hi = prices.length ? Math.max.apply(null, prices) : 0;
+    var avg = prices.length ? prices.reduce(function (a, b) { return a + b; }, 0) / prices.length : 0;
+    el("qx-stats-" + n).innerHTML =
+      '<div class="qx-stat">Available<strong>' + all.length + "</strong></div>" +
+      '<div class="qx-stat">Low<strong>' + (all.length ? money(lo, 0) : "—") + "</strong></div>" +
+      '<div class="qx-stat">Average<strong>' + (all.length ? money(avg, 0) : "—") + "</strong></div>" +
+      '<div class="qx-stat">High<strong>' + (all.length ? money(hi, 0) : "—") + "</strong></div>";
+    var rows = '<tr class="qx-driver' + (pick === QX_DRIVER ? " qx-sel" : "") + '"><td><button type="button" class="btn sm' + (pick === QX_DRIVER ? " primary" : "") + '" data-act="qx-pick" data-n="' + n + '" data-id="' + QX_DRIVER + '"' + (all.length ? "" : " disabled") + '>' + (pick === QX_DRIVER ? "Selected" : "Select") + "</button></td>" +
+      '<td colspan="4"><strong>Driver’s choice</strong> <span class="muted">— driver picks a matching container at delivery; we verify it against this criteria</span></td>' +
+      '<td class="num">' + (all.length ? "avg " + money(avg, 0) : "—") + "</td></tr>";
+    rows += all.map(function (c) {
+      var off = !!taken[c.id], sel = pick === c.id;
+      return '<tr class="' + (sel ? "qx-sel" : "") + (off ? " qx-off" : "") + '"><td><button type="button" class="btn sm' + (sel ? " primary" : "") + '" data-act="qx-pick" data-n="' + n + '" data-id="' + esc(c.id) + '"' + (off ? " disabled" : "") + ">" + (sel ? "Selected" : "Select") + "</button></td>" +
+        '<td class="cid">' + esc(c.id) + (off ? ' <span class="muted">(in this quote)</span>' : "") + "</td><td>" + esc(c.grade || "") + "</td><td>" + esc(c.condition || "") + "</td><td>" + esc(c.color || "—") + '</td><td class="num">' + money(c.bookValue, 0) + "</td></tr>";
+    }).join("");
+    el("qx-list-" + n).innerHTML = '<table><thead><tr><th></th><th>Container</th><th>Grade</th><th>Condition</th><th>Color</th><th class="num">Extended price</th></tr></thead><tbody>' + rows + "</tbody></table>" +
+      (all.length ? "" : '<div class="muted" style="padding:10px;font-size:13px">No available containers match this criteria right now.</div>');
+  }
+  function qxRefreshAll() {
+    Array.prototype.forEach.call(document.querySelectorAll("#q-sales-sections .csec"), function (sec) { qxRefresh(sec.getAttribute("data-n")); });
+  }
+  function qxPick(n, id) {
+    var crit = qxCrit(n), all = qxMatching(crit);
+    el("qx-pick-" + n).value = id;
+    var price;
+    if (id === QX_DRIVER) {
+      price = all.length ? Math.round(all.reduce(function (a, c) { return a + (Number(c.bookValue) || 0); }, 0) / all.length) : 0;
+      el("qx-pricehint-" + n).textContent = "Starts at the category average — adjust as needed";
+    } else {
+      var c = salesContainerById(id); price = c ? Number(c.bookValue) || 0 : 0;
+      el("qx-pricehint-" + n).textContent = "Starts at this container’s extended price — adjust as needed";
+    }
+    el("qx-price-" + n).value = price || "";
+    qxRefreshAll();
+  }
+  function qxRelabel() {
+    var secs = document.querySelectorAll("#q-sales-sections .csec");
+    Array.prototype.forEach.call(secs, function (sec, i) {
+      sec.querySelector(".csec-title").textContent = "Container " + (i + 1) + (secs.length > 1 ? " of " + secs.length : "");
+      sec.querySelector(".csec-copybtn").style.display = i === 0 ? "none" : "";
+      sec.querySelector(".csec-rmbtn").style.display = secs.length === 1 ? "none" : "";
+    });
+  }
+  function qxRead(n) {
+    var g = function (id) { var e2 = el(id + n); return e2 ? e2.value : ""; };
+    var pick = g("qx-pick-");
+    var driver = pick === QX_DRIVER;
+    return Object.assign({
+      category: "Sales", containerType: g("qx-type-"), qty: 1,
+      salesContainerId: (pick && !driver) ? pick : "",
+      salesSpecType: driver ? g("qx-type-") : "", salesSpecCondition: driver ? g("qx-cond-") : "", salesSpecColor: driver ? g("qx-color-").trim() : "",
+      driversChoice: driver, pick: pick, salePrice: Number(g("qx-price-")) || 0,
+      shipToAddress: g("qx-ship-").trim()
+    }, timingReadFields({ type: "qx-dtype-" + n, date: "qx-date-" + n, hard: "qx-hard-" + n, note: "qx-datenote-" + n }));
+  }
+  function qxFill(n, v) {
+    var set = function (id, val) { var e2 = el(id + n); if (e2) e2.value = val == null ? "" : val; };
+    set("qx-type-", v.type); set("qx-cond-", v.cond); set("qx-color-", v.color); set("qx-pick-", v.pick); set("qx-price-", v.price); set("qx-ship-", v.ship);
+    timingFillFields({ type: "qx-dtype-" + n, date: "qx-date-" + n, hard: "qx-hard-" + n, note: "qx-datenote-" + n }, { dateType: v.dateType, requestedDate: v.date, hardDate: v.hardDate, dateNote: v.dateNote });
+  }
+  function qxSnapshot(n) {
+    var r = qxRead(n), g = function (id) { var e2 = el(id + n); return e2 ? e2.value : ""; };
+    return { type: g("qx-type-"), cond: g("qx-cond-"), color: g("qx-color-"), pick: r.driversChoice ? QX_DRIVER : "", price: r.driversChoice ? r.salePrice : "", ship: r.shipToAddress, date: r.requestedDate, dateType: r.dateType, dateNote: r.dateNote, hardDate: r.hardDate };
+  }
+  function qxAddSection(copyPrev) {
+    var host = el("q-sales-sections");
+    if (!host) return;
+    var secs = host.querySelectorAll(".csec");
+    var v = (copyPrev && secs.length) ? qxSnapshot(secs[secs.length - 1].getAttribute("data-n")) : { type: TYPES[0], cond: "", color: "", pick: "", price: "", ship: "", date: "" };
+    QX_SEQ++;
+    host.insertAdjacentHTML("beforeend", qxSectionHtml(QX_SEQ, v));
+    qxRelabel();
+    qxRefreshAll();
+    var added = host.lastElementChild;
+    if (secs.length && added.scrollIntoView) added.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function qxCopyPrev(n) {
+    var sec = document.querySelector('#q-sales-sections .csec[data-n="' + n + '"]');
+    var prev = sec && sec.previousElementSibling;
+    if (!prev) return flash("No previous container to copy from");
+    qxFill(n, qxSnapshot(prev.getAttribute("data-n")));
+    qxRefreshAll();
+    flash("Copied criteria, address and timing from the previous container");
+  }
+  function qxRemove(n) {
+    var secs = document.querySelectorAll("#q-sales-sections .csec");
+    if (secs.length <= 1) return;
+    var sec = document.querySelector('#q-sales-sections .csec[data-n="' + n + '"]');
+    if (sec) sec.parentNode.removeChild(sec);
+    qxRelabel(); qxRefreshAll();
+  }
+  function qxItems() {
+    var out = [], bad = null, msg = "";
+    function fail(i, m) { if (bad === null) { bad = i + 1; msg = "Container " + (i + 1) + ": " + m; } }
+    Array.prototype.forEach.call(document.querySelectorAll("#q-sales-sections .csec"), function (sec, i) {
+      var n = sec.getAttribute("data-n"), it = qxRead(n);
+      var pool = qxMatching(qxCrit(n));
+      if (!it.pick) return fail(i, "select a container from the list, or choose Driver’s choice");
+      if (it.driversChoice && !pool.length) return fail(i, "no available containers match this criteria, so Driver’s choice can’t be promised");
+      if (!it.driversChoice) {
+        var sc = salesContainerById(it.pick);
+        if (!sc || sc.status !== "Available") return fail(i, it.pick + " is no longer available — pick another");
+      }
+      if (!(it.salePrice > 0)) return fail(i, "enter the sale price");
+      if ((it.dateType === "Specific Date" || it.dateType === "Week of") && !it.requestedDate) return fail(i, "pick the " + (it.dateType === "Week of" ? "week" : "delivery date") + " (or change the delivery timing)");
+      out.push(it);
     });
     return { items: out, badIndex: bad, badMsg: msg };
   }
@@ -3192,6 +3371,11 @@
       if (sr.badIndex !== null) return flash(sr.badMsg, true);
       items = sr.items;
       if (!items.length) return flash("Fill in at least one container (monthly rate) before saving");
+    } else if (category === "Sales" && el("q-sales-sections")) {
+      var xr = qxItems();
+      if (xr.badIndex !== null) return flash(xr.badMsg, true);
+      items = xr.items;
+      if (!items.length) return flash("Add at least one container before saving");
     } else {
       var current = quoteReadCurrentLineItem();
       items = QUOTE_LINE_ITEMS.slice();
@@ -3397,7 +3581,7 @@
       else if (card.containerId) statusHtml = '<div class="formula" style="color:var(--ok)">Container ' + esc(card.containerId) + (card.scanStatus === "matched" ? " confirmed" : card.scanStatus === "assigned" ? " assigned to this job" : "") + "</div>";
       else if (card.specType || card.specCondition || card.specColor) {
         var specParts = [card.specType, card.specCondition, card.specColor].filter(Boolean);
-        statusHtml = '<div class="formula">Grab any container matching: ' + esc(specParts.join(", ")) + "</div>";
+        statusHtml = '<div class="formula"><strong>Driver\u2019s choice</strong> — find an available container matching: ' + esc(specParts.join(", ")) + '.<br>Scan or type its ID; it\u2019s checked against inventory before it\u2019s assigned.</div>';
       }
     }
     var confirmHtml;
@@ -3434,6 +3618,11 @@
     if (!card) return;
     var needsContainer = card.category !== "Contract Haul";
     if (needsContainer && !card.containerId) return flash("Capture the container first — scan it or type the ID");
+    if (card.category === "Sales" && (card.specType || card.specCondition || card.specColor)) {
+      var chosen = salesContainerById(card.containerId);
+      if (!chosen) return flash("That container isn\u2019t in sales inventory \u2014 re-scan a valid one", true);
+      if (!containerMatchesSpec(chosen, card)) return flash(chosen.id + " no longer matches the job criteria \u2014 pick another container", true);
+    }
     var actualDate = today();
     var patch = { driverConfirmed: true, actualDate: actualDate };
     state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === cardId ? Object.assign({}, c, patch) : c; });
@@ -3506,6 +3695,16 @@
     if (card.specColor && (c.color || "").trim().toLowerCase().indexOf(card.specColor.trim().toLowerCase()) === -1) return false;
     return true;
   }
+  function specMismatchReasons(found, card) {
+    var why = [];
+    if (found.status === "Sold") why.push("it is already sold");
+    else if (found.status !== "Available") why.push("it is " + String(found.status).toLowerCase() + " for another job");
+    if (state.dispatchcards.some(function (c) { return c.id !== card.id && c.containerId === found.id && !c.dispatcherConfirmed; })) why.push("it is already assigned to another job");
+    if (card.specType && found.type !== card.specType) why.push("size is " + found.type + ", job needs " + card.specType);
+    if (card.specCondition && found.condition !== card.specCondition) why.push("condition is " + found.condition + ", job needs " + card.specCondition);
+    if (card.specColor && (found.color || "").trim().toLowerCase().indexOf(card.specColor.trim().toLowerCase()) === -1) why.push("color is " + (found.color || "unlisted") + ", job needs " + card.specColor);
+    return why;
+  }
   function driverCaptureContainer(cardId, rawValue) {
     var card = dispatchCardById(cardId);
     if (!card) return;
@@ -3520,9 +3719,10 @@
       patch.scanStatus = "unrecognized";
       msg = "That code isn\u2019t recognized — flagged for your dispatcher to follow up.";
     } else if (!card.containerId && hasSpec) {
-      if (found.status !== "Available" || !containerMatchesSpec(found, card)) {
+      var why = specMismatchReasons(found, card);
+      if (why.length) {
         patch.scanStatus = "mismatch";
-        msg = "That container doesn\u2019t match the requested description — flagged for your dispatcher to follow up.";
+        msg = "Can\u2019t use " + found.id + ": " + why.join("; ") + " \u2014 flagged for your dispatcher. Try a different container.";
       } else {
         patch.containerId = found.id;
         patch.scanStatus = "assigned";
@@ -3560,7 +3760,7 @@
     if (c.category === "Rental Delivery") return (c.containerType || "Container") + " to " + (c.shipToAddress || "address TBD");
     if (c.category === "Rental Return") return "Pick up " + containerLabel(c.containerId) + " from " + (c.shipToAddress || "address on file");
     if (c.category === "Sales") {
-      var specLabel = c.containerId ? c.containerId : ([c.specType, c.specCondition, c.specColor].filter(Boolean).join(", ") || "Container");
+      var specLabel = c.containerId ? c.containerId : ("Driver\u2019s choice: " + ([c.specType, c.specCondition, c.specColor].filter(Boolean).join(", ") || "any container"));
       return specLabel + " sale to " + (c.shipToAddress || "address TBD");
     }
     return (c.containerType ? c.containerType + " haul from " : "Haul from ") + (c.pickupAddress || "pickup TBD");
@@ -3689,7 +3889,14 @@
         '<div class="fld"><label>Requested return date (drives the credit)</label><div class="formula">' + (rental && rental.requestedReturnDate ? fmtDate(rental.requestedReturnDate) : "—") + "</div></div>";
     } else if (card.category === "Sales") {
       var sc = salesContainerById((q && q.salesContainerId) || card.containerId);
-      categoryHtml =
+      var specWarn = "";
+      if (card.specType || card.specCondition || card.specColor) {
+        var specTxt = [card.specType, card.specCondition, card.specColor].filter(Boolean).join(", ");
+        specWarn = !sc ? '<div class="banner">Driver\u2019s choice job (' + esc(specTxt) + ') \u2014 no container assigned yet.</div>'
+          : containerMatchesSpec(sc, card) ? '<div class="formula" style="color:var(--ok)">\u2705 Driver\u2019s choice: ' + esc(sc.id) + ' verified against inventory \u2014 matches ' + esc(specTxt) + '</div>'
+          : '<div class="banner">\u26A0 ' + esc(sc.id) + ' does not match the job criteria (' + esc(specTxt) + ')</div>';
+      }
+      categoryHtml = specWarn +
         (sc ? '<div class="formula">Book value (reference): ' + money(sc.bookValue, 0) + "</div>" : "") +
         '<div class="fld"><label>Sale price ($)</label><input class="in mono" id="confirm-sale-price" type="number" value="' + esc(src.salePrice || 0) + '"></div>';
     } else if (card.category === "Contract Haul") {
@@ -4526,6 +4733,11 @@
       if (c) { wrap.style.display = ""; disp.textContent = money(c.bookValue, 0); } else { wrap.style.display = "none"; }
     },
     "quote-lineitem-add": function () { quoteAddLineItem(); },
+    "qx-add": function () { qxAddSection(false); },
+    "qx-add-copy": function () { qxAddSection(true); },
+    "qx-copy": function (t) { qxCopyPrev(t.getAttribute("data-n")); },
+    "qx-remove": function (t) { qxRemove(t.getAttribute("data-n")); },
+    "qx-pick": function (t) { qxPick(t.getAttribute("data-n"), t.getAttribute("data-id")); },
     "qsec-add": function () { quoteAddSection(false); },
     "qsec-add-copy": function () { quoteAddSection(true); },
     "qsec-copy": function (t) { quoteSectionCopyPrev(t.getAttribute("data-n")); },
@@ -4624,6 +4836,7 @@
     else if (e.target.id === "q-cust-account") { el("q-customer").value = ""; renderQuoteAccountCombo(e.target.value); }
     else if (e.target.id === "q-salescont-search") { el("q-salescont").value = ""; el("q-bookvalue-wrap").style.display = "none"; renderSalesContainerCombo(e.target.value); }
     else if (e.target.id === "q-sales-spec-color") { updateSalesSpecMatchInfo(); }
+    else if (e.target.classList.contains("qx-crit")) { qxRefreshAll(); }
     else if (e.target.classList.contains("addr-input")) { renderAddressCombo(e.target.id, e.target.value); }
   });
 
@@ -4708,6 +4921,7 @@
       var rate = rateForType(e.target.value);
       if (rate) { el("q-monthly-rate").value = rate.monthlyRate; el("q-service-fee").value = rate.serviceFee; }
     }
+    else if (e.target.classList.contains("qx-crit")) { qxRefreshAll(); }
     else if (e.target.classList.contains("qs-type")) {
       var rate2 = rateForType(e.target.value), n2 = e.target.getAttribute("data-n");
       if (rate2) { el("qs-rate-" + n2).value = rate2.monthlyRate; el("qs-fee-" + n2).value = rate2.serviceFee; }
