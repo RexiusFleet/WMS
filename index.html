@@ -231,6 +231,7 @@
       <button data-act="tab" data-tab="new-quote">New Quote</button>
       <button data-act="tab" data-tab="quotes">Quotes</button>
       <button data-act="tab" data-tab="dispatch">Dispatch</button>
+      <button data-act="tab" data-tab="confirmations">Needs Confirmation</button>
       <button data-act="tab" data-tab="sales-billing">Sales Billing</button>
       <button data-act="tab" data-tab="completed-jobs">Completed Jobs</button>
       <button data-act="tab" data-tab="rate-card">Rate Card</button>
@@ -290,7 +291,7 @@
 
   /* ------------------------- state ------------------------- */
   var state = { containers: [], customers: [], rentals: [], invoices: [], collections: [], hauls: [], salescontainers: [], quotes: [], dispatchcards: [], profiles: [], salesinvoices: [], ratecards: [] };
-  var VALID_TABS = ["dashboard", "fleet", "customers", "rentals", "billing", "collections", "haul", "sales-inv", "new-quote", "quotes", "dispatch", "sales-billing", "completed-jobs", "rate-card", "driver-access"];
+  var VALID_TABS = ["dashboard", "fleet", "customers", "rentals", "billing", "collections", "haul", "sales-inv", "new-quote", "quotes", "dispatch", "confirmations", "sales-billing", "completed-jobs", "rate-card", "driver-access"];
   function lastTabOrDefault() {
     try {
       var saved = window.localStorage.getItem("wms-tracker-last-tab");
@@ -894,6 +895,10 @@
     checkSalesHolds();
     var mainEl = el("view"); if (mainEl) mainEl.classList.toggle("wide", ui.tab === "dispatch");
     Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) {
+      if (b.getAttribute("data-tab") === "confirmations") {
+        var nc = dispatchCardsNeedingConfirmation().length;
+        b.textContent = "Needs Confirmation" + (nc ? " (" + nc + ")" : "");
+      }
       b.classList.toggle("on", b.getAttribute("data-tab") === ui.tab);
     });
 
@@ -922,6 +927,7 @@
     else if (ui.tab === "new-quote") renderNewQuote(v);
     else if (ui.tab === "quotes") renderQuotes(v);
     else if (ui.tab === "dispatch") renderDispatch(v);
+    else if (ui.tab === "confirmations") renderConfirmations(v);
     else if (ui.tab === "sales-billing") renderSalesBilling(v);
     else if (ui.tab === "completed-jobs") renderCompletedJobs(v);
     else if (ui.tab === "rate-card") renderRateCard(v);
@@ -3599,13 +3605,16 @@
       '<span class="badge b-ok">Rental delivery</span> <span class="badge b-danger">Rental return</span> <span class="badge b-rent">Sales</span> <span class="badge b-credit">Contract haul</span> ' +
       '<span class="muted" style="font-size:12.5px">letter dot = assigned driver</span>' +
       "</div></div></div>" +
-      '<div class="panel"><h3>Needs your confirmation<span class="count" id="dispatch-confirm-count"></span></h3>' +
-      '<p class="panel-sub">The driver has finished these — verify the container and date, then confirm to send them to billing.</p>' +
-      '<div id="dispatch-confirm-table"></div></div>';
-    renderDispatchConfirmTable();
+      '';
     renderDispatchQueueTable();
     renderDispatchCalendar();
     el("dispatch-view-label").textContent = dispatchViewLabel();
+  }
+  function renderConfirmations(v) {
+    v.innerHTML =
+      '<div class="pagehead"><div><h2>Needs Confirmation<span class="count" id="dispatch-confirm-count"></span></h2><div class="sub">The driver has finished these — verify the container and date, then confirm to send them to billing.</div></div></div>' +
+      '<div class="panel"><div id="dispatch-confirm-table"></div></div>';
+    renderDispatchConfirmTable();
   }
   function dispatchCardsNeedingConfirmation() {
     return state.dispatchcards.filter(function (c) { return c.driverConfirmed && !c.dispatcherConfirmed; })
