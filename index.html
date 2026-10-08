@@ -454,12 +454,16 @@
   function toCamel(s) { return s.replace(/_([a-z])/g, function (_, c) { return c.toUpperCase(); }); }
   function rowToDb(row) {
     var out = {};
-    Object.keys(row).forEach(function (k) { out[toSnake(k)] = row[k]; });
+    Object.keys(row).forEach(function (k) {
+      var v = row[k];
+      if (v === "" && /Date$/.test(k)) v = null; // Postgres date columns reject empty strings
+      out[toSnake(k)] = v;
+    });
     return out;
   }
   function rowFromDb(row) {
     var out = {};
-    Object.keys(row).forEach(function (k) { out[toCamel(k)] = row[k]; });
+    Object.keys(row).forEach(function (k) { var c = toCamel(k); out[c] = (row[k] === null && /Date$/.test(c)) ? "" : row[k]; });
     return out;
   }
   var TABLE_KEYS = { containers: "id", customers: "id", rentals: "id", invoices: "id", collections: "account", hauls: "id", salescontainers: "id", quotes: "id", dispatchcards: "id", profiles: "email", salesinvoices: "id", ratecards: "id" };
