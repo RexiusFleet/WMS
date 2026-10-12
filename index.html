@@ -939,9 +939,6 @@
     else if (ui.tab === "confirmations") renderConfirmations(v);
     else if (ui.tab === "rate-card") renderRateCard(v);
 
-    v.insertAdjacentHTML("beforeend",
-      '<div style="margin-top:28px;display:flex;justify-content:flex-end">' +
-      '<button class="btn ghost sm muted" data-act="reset-all">Reset all data</button></div>');
   }
   function render() {
     var scrollY = window.scrollY;
@@ -3082,6 +3079,7 @@
       '<div class="fld">' + lab("Condition") + '<select class="in qx-crit" id="qx-cond-' + n + '" data-n="' + n + '">' + opt([{ v: "", t: "Any condition" }].concat(SALES_CONDITIONS), v.cond) + "</select></div></div>" +
       '<div class="fld">' + lab("Color (optional)") + '<input class="in qx-crit" id="qx-color-' + n + '" data-n="' + n + '" placeholder="e.g. blue" value="' + esc(v.color || "") + '"></div>' +
       '<input type="hidden" id="qx-pick-' + n + '" value="' + esc(v.pick || "") + '">' +
+      '<input type="hidden" id="qx-excl-' + n + '" value="' + esc(v.excl || "") + '">' +
       '<div class="qx-stats" id="qx-stats-' + n + '"></div>' +
       '<div class="qx-list" id="qx-list-' + n + '"></div>' +
       '<div class="fld">' + lab("Sale price ($)") + '<input class="in mono" id="qx-price-' + n + '" type="number" min="0" value="' + esc(v.price || "") + '"><div class="subline" id="qx-pricehint-' + n + '"></div></div>' +
@@ -3102,16 +3100,45 @@
       '<div class="qx-stat">Low<strong>' + (all.length ? money(lo, 0) : "—") + "</strong></div>" +
       '<div class="qx-stat">Average<strong>' + (all.length ? money(avg, 0) : "—") + "</strong></div>" +
       '<div class="qx-stat">High<strong>' + (all.length ? money(hi, 0) : "—") + "</strong></div>";
-    var rows = '<tr class="qx-driver' + (pick === QX_DRIVER ? " qx-sel" : "") + '"><td><button type="button" class="btn sm' + (pick === QX_DRIVER ? " primary" : "") + '" data-act="qx-pick" data-n="' + n + '" data-id="' + QX_DRIVER + '"' + (all.length ? "" : " disabled") + '>' + (pick === QX_DRIVER ? "Selected" : "Select") + "</button></td>" +
-      '<td colspan="5"><strong>Driver’s choice</strong> <span class="muted">— driver picks a matching container at delivery; we verify it against this criteria</span></td>' +
-      '<td class="num">' + (all.length ? "avg " + money(avg, 0) : "—") + "</td></tr>";
+    var drv = pick === QX_DRIVER;
+    var excl = qxExclList(n).filter(function (id) { return all.some(function (c) { return c.id === id; }); });
+    el("qx-excl-" + n).value = excl.join(",");
+    var allowed = all.filter(function (c) { return !taken[c.id] && excl.indexOf(c.id) === -1; });
+    if (drv) el("qx-stats-" + n).insertAdjacentHTML("beforeend", '<div class="qx-stat">Driver may use<strong>' + allowed.length + " of " + all.length + "</strong></div>");
+    var allowedAvg = allowed.length ? allowed.reduce(function (a, c) { return a + (Number(c.bookValue) || 0); }, 0) / allowed.length : 0;
+    var rows = '<tr class="qx-driver' + (drv ? " qx-sel" : "") + '"><td><button type="button" class="btn sm' + (drv ? " primary" : "") + '" data-act="qx-pick" data-n="' + n + '" data-id="' + QX_DRIVER + '"' + (all.length ? "" : " disabled") + '>' + (drv ? "Selected" : "Select") + "</button></td>" +
+      '<td colspan="5"><strong>Driver’s choice</strong> <span class="muted">— driver picks a matching container at delivery; we verify it against this criteria' + (drv ? ". Untick any container you don’t want them to use." : "") + "</span></td>" +
+      '<td class="num">' + (all.length ? "avg " + money(drv ? allowedAvg : avg, 0) : "—") + "</td>" + (drv ? "<td></td>" : "") + "</tr>";
     rows += all.map(function (c) {
-      var off = !!taken[c.id], sel = pick === c.id;
-      return '<tr class="' + (sel ? "qx-sel" : "") + (off ? " qx-off" : "") + '"><td><button type="button" class="btn sm' + (sel ? " primary" : "") + '" data-act="qx-pick" data-n="' + n + '" data-id="' + esc(c.id) + '"' + (off ? " disabled" : "") + ">" + (sel ? "Selected" : "Select") + "</button></td>" +
-        '<td class="cid">' + esc(c.id) + (off ? ' <span class="muted">(in this quote)</span>' : "") + "</td><td>" + esc(c.condition || "") + '</td><td class="num">' + (Number(c.rating) ? esc(c.rating) : "—") + "</td><td>" + esc(c.color || "—") + "</td><td>" + esc(c.location || "—") + '</td><td class="num">' + money(c.bookValue, 0) + "</td></tr>";
+      var off = !!taken[c.id], sel = pick === c.id, ex = excl.indexOf(c.id) !== -1;
+      var allow = drv ? '<td class="num">' + (off ? "—" : '<input type="checkbox" class="qx-allow" data-act="qx-excl" data-n="' + n + '" data-id="' + esc(c.id) + '"' + (ex ? "" : " checked") + ' title="Driver may use this container">') + "</td>" : "";
+      return '<tr class="' + (sel ? "qx-sel" : "") + (off ? " qx-off" : "") + (ex ? " qx-off" : "") + '"><td><button type="button" class="btn sm' + (sel ? " primary" : "") + '" data-act="qx-pick" data-n="' + n + '" data-id="' + esc(c.id) + '"' + (off ? " disabled" : "") + ">" + (sel ? "Selected" : "Select") + "</button></td>" +
+        '<td class="cid">' + esc(c.id) + (off ? ' <span class="muted">(in this quote)</span>' : ex ? ' <span class="muted">(excluded)</span>' : "") + "</td><td>" + esc(c.condition || "") + '</td><td class="num">' + (Number(c.rating) ? esc(c.rating) : "—") + "</td><td>" + esc(c.color || "—") + "</td><td>" + esc(c.location || "—") + '</td><td class="num">' + money(c.bookValue, 0) + "</td>" + allow + "</tr>";
     }).join("");
-    el("qx-list-" + n).innerHTML = '<table><thead><tr><th></th><th>Container</th><th>Condition</th><th class="num">Rating</th><th>Color</th><th>Location</th><th class="num">Extended price</th></tr></thead><tbody>' + rows + "</tbody></table>" +
+    el("qx-list-" + n).innerHTML = '<table><thead><tr><th></th><th>Container</th><th>Condition</th><th class="num">Rating</th><th>Color</th><th>Location</th><th class="num">Extended price</th>' + (drv ? '<th class="num">Driver may use</th>' : "") + "</tr></thead><tbody>" + rows + "</tbody></table>" +
       (all.length ? "" : '<div class="muted" style="padding:10px;font-size:13px">No available containers match this criteria right now.</div>');
+  }
+  function qxExclList(n) {
+    var e2 = el("qx-excl-" + n);
+    return e2 && e2.value ? e2.value.split(",").filter(Boolean) : [];
+  }
+  function qxAllowedPool(n) {
+    var excl = qxExclList(n), taken = qxPicksElsewhere(n);
+    return qxMatching(qxCrit(n)).filter(function (c) { return excl.indexOf(c.id) === -1 && !taken[c.id]; });
+  }
+  function qxAutoPrice(n) {
+    var pool = qxAllowedPool(n);
+    return pool.length ? Math.round(pool.reduce(function (a, c) { return a + (Number(c.bookValue) || 0); }, 0) / pool.length) : 0;
+  }
+  function qxToggleExcl(n, id) {
+    var list = qxExclList(n), i = list.indexOf(id);
+    if (i === -1) list.push(id); else list.splice(i, 1);
+    el("qx-excl-" + n).value = list.join(",");
+    var pe = el("qx-price-" + n);
+    if (pe && el("qx-pick-" + n).value === QX_DRIVER && (!pe.value || pe.value === (pe.getAttribute("data-auto") || ""))) {
+      var a = qxAutoPrice(n); pe.value = a || ""; pe.setAttribute("data-auto", a ? String(a) : "");
+    }
+    qxRefreshAll();
   }
   function qxRefreshAll() {
     Array.prototype.forEach.call(document.querySelectorAll("#q-sales-sections .csec"), function (sec) { qxRefresh(sec.getAttribute("data-n")); });
@@ -3121,8 +3148,9 @@
     el("qx-pick-" + n).value = id;
     var price;
     if (id === QX_DRIVER) {
-      price = all.length ? Math.round(all.reduce(function (a, c) { return a + (Number(c.bookValue) || 0); }, 0) / all.length) : 0;
-      el("qx-pricehint-" + n).textContent = "Starts at the category average — adjust as needed";
+      price = qxAutoPrice(n);
+      el("qx-price-" + n).setAttribute("data-auto", price ? String(price) : "");
+      el("qx-pricehint-" + n).textContent = "Starts at the average of the containers the driver may use \u2014 adjust as needed";
     } else {
       var c = salesContainerById(id); price = c ? Number(c.bookValue) || 0 : 0;
       el("qx-pricehint-" + n).textContent = "Starts at this container’s extended price — adjust as needed";
@@ -3147,17 +3175,18 @@
       salesContainerId: (pick && !driver) ? pick : "",
       salesSpecType: driver ? g("qx-type-") : "", salesSpecCondition: driver ? g("qx-cond-") : "", salesSpecColor: driver ? g("qx-color-").trim() : "",
       driversChoice: driver, pick: pick, salePrice: Number(g("qx-price-")) || 0,
+      salesExcludedIds: driver ? qxExclList(n).join(",") : "",
       shipToAddress: g("qx-ship-").trim()
     }, timingReadFields({ type: "qx-dtype-" + n, date: "qx-date-" + n, hard: "qx-hard-" + n, note: "qx-datenote-" + n }));
   }
   function qxFill(n, v) {
     var set = function (id, val) { var e2 = el(id + n); if (e2) e2.value = val == null ? "" : val; };
-    set("qx-type-", v.type); set("qx-cond-", v.cond); set("qx-color-", v.color); set("qx-pick-", v.pick); set("qx-price-", v.price); set("qx-ship-", v.ship);
+    set("qx-type-", v.type); set("qx-cond-", v.cond); set("qx-color-", v.color); set("qx-pick-", v.pick); set("qx-excl-", v.excl); set("qx-price-", v.price); set("qx-ship-", v.ship);
     timingFillFields({ type: "qx-dtype-" + n, date: "qx-date-" + n, hard: "qx-hard-" + n, note: "qx-datenote-" + n }, { dateType: v.dateType, requestedDate: v.date, hardDate: v.hardDate, dateNote: v.dateNote });
   }
   function qxSnapshot(n) {
     var r = qxRead(n), g = function (id) { var e2 = el(id + n); return e2 ? e2.value : ""; };
-    return { type: g("qx-type-"), cond: g("qx-cond-"), color: g("qx-color-"), pick: r.driversChoice ? QX_DRIVER : "", price: r.driversChoice ? r.salePrice : "", ship: r.shipToAddress, date: r.requestedDate, dateType: r.dateType, dateNote: r.dateNote, hardDate: r.hardDate };
+    return { type: g("qx-type-"), cond: g("qx-cond-"), color: g("qx-color-"), pick: r.driversChoice ? QX_DRIVER : "", excl: r.driversChoice ? r.salesExcludedIds : "", price: r.driversChoice ? r.salePrice : "", ship: r.shipToAddress, date: r.requestedDate, dateType: r.dateType, dateNote: r.dateNote, hardDate: r.hardDate };
   }
   function qxAddSection(copyPrev) {
     var host = el("q-sales-sections");
@@ -3194,6 +3223,7 @@
       var pool = qxMatching(qxCrit(n));
       if (!it.pick) return fail(i, "select a container from the list, or choose Driver’s choice");
       if (it.driversChoice && !pool.length) return fail(i, "no available containers match this criteria, so Driver’s choice can’t be promised");
+      if (it.driversChoice && !qxAllowedPool(n).length) return fail(i, "every matching container is excluded \u2014 leave at least one the driver may use");
       if (!it.driversChoice) {
         var sc = salesContainerById(it.pick);
         if (!sc || sc.status !== "Available") return fail(i, it.pick + " is no longer available — pick another");
@@ -3545,7 +3575,7 @@
         status: autoApprove ? "Approved" : "Draft", createdDate: today(), approvedDate: autoApprove ? today() : null, notes: notes,
         containerType: item.containerType || TYPES[0], monthlyRate: item.monthlyRate || 0, serviceFee: item.serviceFee || 0,
         salesContainerId: item.salesContainerId || "", salePrice: item.salePrice || 0,
-        salesSpecType: item.salesSpecType || "", salesSpecCondition: item.salesSpecCondition || "", salesSpecColor: item.salesSpecColor || "",
+        salesSpecType: item.salesSpecType || "", salesSpecCondition: item.salesSpecCondition || "", salesSpecColor: item.salesSpecColor || "", salesExcludedIds: item.salesExcludedIds || "",
         pickupAddress: item.pickupAddress || "", haulAmount: item.haulAmount || 0,
         requestedDate: item.requestedDate || "", shipToAddress: item.shipToAddress || "", poNumber: po,
         dateType: item.dateType || "", dateNote: item.dateNote || "", hardDate: !!item.hardDate,
@@ -3604,7 +3634,8 @@
       driver: "", released: false, notes: q.notes || "",
       specType: (q.category === "Sales" && !q.salesContainerId) ? (q.salesSpecType || "") : "",
       specCondition: (q.category === "Sales" && !q.salesContainerId) ? (q.salesSpecCondition || "") : "",
-      specColor: (q.category === "Sales" && !q.salesContainerId) ? (q.salesSpecColor || "") : ""
+      specColor: (q.category === "Sales" && !q.salesContainerId) ? (q.salesSpecColor || "") : "",
+      excludedIds: (q.category === "Sales" && !q.salesContainerId) ? (q.salesExcludedIds || "") : ""
     };
   }
   function quoteApprove(id) {
@@ -3674,6 +3705,10 @@
       if (c.scanStatus === "mismatch") statusNote = '<div class="banner" style="margin-top:8px">Scanned container doesn\u2019t match — flagged for your dispatcher</div>';
       else if (c.scanStatus === "unrecognized") statusNote = '<div class="banner" style="margin-top:8px">Scanned code not recognized — flagged for your dispatcher</div>';
       else if (c.containerId) statusNote = '<div class="subline" style="margin-top:8px;color:var(--ok)">Container: ' + esc(c.containerId) + (c.scanStatus === "matched" ? " — confirmed" : c.scanStatus === "assigned" ? " — assigned" : "") + "</div>";
+      else if (c.category === "Sales" && (c.specType || c.specCondition || c.specColor)) {
+        var naN = salesNotAvailableFor(c).length;
+        statusNote = '<div class="subline" style="margin-top:8px">Driver\u2019s choice: ' + esc([c.specType, c.specCondition, c.specColor].filter(Boolean).join(", ")) + (naN ? ' \u2014 <span style="color:var(--danger);font-weight:600">' + naN + " container" + (naN === 1 ? "" : "s") + " off-limits</span>" : "") + " \u2014 tap for details</div>";
+      }
       else statusNote = '<div class="subline" style="margin-top:8px">Container not captured yet — tap to scan</div>';
     }
     var confirmNote = c.driverConfirmed
@@ -3724,8 +3759,7 @@
       else if (card.scanStatus === "unrecognized") statusHtml = '<div class="banner">Scanned <span class="mono">' + esc(card.scannedValue || "") + '</span> — not recognized. Flagged for your dispatcher.</div>';
       else if (card.containerId) statusHtml = '<div class="formula" style="color:var(--ok)">Container ' + esc(card.containerId) + (card.scanStatus === "matched" ? " confirmed" : card.scanStatus === "assigned" ? " assigned to this job" : "") + "</div>";
       else if (card.specType || card.specCondition || card.specColor) {
-        var specParts = [card.specType, card.specCondition, card.specColor].filter(Boolean);
-        statusHtml = '<div class="formula"><strong>Driver\u2019s choice</strong> — find an available container matching: ' + esc(specParts.join(", ")) + '.<br>Scan or type its ID; it\u2019s checked against inventory before it\u2019s assigned.</div>';
+        statusHtml = driverChoiceInfoHtml(card);
       }
     }
     var confirmHtml;
@@ -3832,8 +3866,37 @@
       flash("Sync error — your scan may not have saved: " + (e.message || e), true);
     }
   }
+  function splitIds(v) { return v ? String(v).split(",").map(function (x) { return x.trim(); }).filter(Boolean) : []; }
+  function salesCritMatch(c, card) {
+    if (card.specType && c.type !== card.specType) return false;
+    if (card.specCondition && c.condition !== card.specCondition) return false;
+    if (card.specColor && (c.color || "").trim().toLowerCase().indexOf(card.specColor.trim().toLowerCase()) === -1) return false;
+    return true;
+  }
+  // containers that fit the job's criteria but the driver must NOT use, with the reason
+  function salesNotAvailableFor(card) {
+    var ex = splitIds(card.excludedIds);
+    return state.salescontainers.filter(function (c) { return salesCritMatch(c, card); }).map(function (c) {
+      var reason = "";
+      if (ex.indexOf(c.id) !== -1) reason = "held back by the office";
+      else if (c.status === "Sold") reason = "sold";
+      else if (c.status === "Reserved") reason = "reserved for another job";
+      else if (state.dispatchcards.some(function (x) { return x.id !== card.id && x.containerId === c.id && !x.dispatcherConfirmed; })) reason = "on another job";
+      return reason ? { id: c.id, reason: reason, color: c.color, location: c.location } : null;
+    }).filter(Boolean);
+  }
+  function driverChoiceInfoHtml(card) {
+    var crit = [["Size", card.specType], ["Condition", card.specCondition], ["Color", card.specColor]].filter(function (p) { return p[1]; });
+    var na = salesNotAvailableFor(card);
+    return '<div class="formula"><strong>Driver\u2019s choice</strong> \u2014 find an available container that is:<br>' +
+      (crit.length ? crit.map(function (p) { return "<strong>" + esc(p[0]) + ":</strong> " + esc(p[1]); }).join(" &nbsp;\u00b7&nbsp; ") : "any container") + "</div>" +
+      (na.length ? '<div class="banner"><strong>Do NOT use these (' + na.length + "):</strong><br>" + na.map(function (x) { return '<span class="mono">' + esc(x.id) + "</span> \u2014 " + esc(x.reason) + (x.location ? " (" + esc(x.location) + ")" : ""); }).join("<br>") + "</div>"
+        : '<div class="subline">No containers in this criteria are off-limits.</div>') +
+      '<div class="subline">Scan or type the container\u2019s ID \u2014 it\u2019s checked against inventory before it\u2019s assigned.</div>';
+  }
   function containerMatchesSpec(c, card) {
     if (!c) return false;
+    if (splitIds(card.excludedIds).indexOf(c.id) !== -1) return false;
     if (card.specType && c.type !== card.specType) return false;
     if (card.specCondition && c.condition !== card.specCondition) return false;
     if (card.specColor && (c.color || "").trim().toLowerCase().indexOf(card.specColor.trim().toLowerCase()) === -1) return false;
@@ -3844,6 +3907,7 @@
     if (found.status === "Sold") why.push("it is already sold");
     else if (found.status !== "Available") why.push("it is " + String(found.status).toLowerCase() + " for another job");
     if (state.dispatchcards.some(function (c) { return c.id !== card.id && c.containerId === found.id && !c.dispatcherConfirmed; })) why.push("it is already assigned to another job");
+    if (splitIds(card.excludedIds).indexOf(found.id) !== -1) why.push("the office held it back for another customer");
     if (card.specType && found.type !== card.specType) why.push("size is " + found.type + ", job needs " + card.specType);
     if (card.specCondition && found.condition !== card.specCondition) why.push("condition is " + found.condition + ", job needs " + card.specCondition);
     if (card.specColor && (found.color || "").trim().toLowerCase().indexOf(card.specColor.trim().toLowerCase()) === -1) why.push("color is " + (found.color || "unlisted") + ", job needs " + card.specColor);
@@ -4988,6 +5052,7 @@
     "qx-add-copy": function () { qxAddSection(true); },
     "qx-copy": function (t) { qxCopyPrev(t.getAttribute("data-n")); },
     "qx-remove": function (t) { qxRemove(t.getAttribute("data-n")); },
+    "qx-excl": function (t) { qxToggleExcl(t.getAttribute("data-n"), t.getAttribute("data-id")); },
     "qx-pick": function (t) { qxPick(t.getAttribute("data-n"), t.getAttribute("data-id")); },
     "qsec-add": function () { quoteAddSection(false); },
     "qsec-add-copy": function () { quoteAddSection(true); },
