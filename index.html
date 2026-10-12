@@ -906,8 +906,9 @@
     var mainEl = el("view"); if (mainEl) mainEl.classList.toggle("wide", ui.tab === "dispatch");
     Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) {
       if (b.getAttribute("data-tab") === "confirmations") {
-        var nc = dispatchCardsNeedingConfirmation().length;
-        b.innerHTML = "Needs Confirmation" + (nc ? ' <span class="tab-badge">' + nc + "</span>" : "");
+        var nc = dispatchCardsNeedingConfirmation().length, npd = dispatchCardsPastDue().length;
+        b.innerHTML = "Needs Confirmation" + ((nc + npd) ? ' <span class="tab-badge">' + (nc + npd) + "</span>" : "");
+        b.title = (nc + npd) ? (nc + " to confirm \u00b7 " + npd + " past due") : "";
       }
       b.classList.toggle("on", b.getAttribute("data-tab") === ui.tab);
     });
@@ -3957,8 +3958,107 @@
   function renderConfirmations(v) {
     v.innerHTML =
       '<div class="pagehead"><div><h2>Needs Confirmation<span class="count" id="dispatch-confirm-count"></span></h2><div class="sub">The driver has finished these — verify the container and date, then confirm to send them to billing.</div></div></div>' +
-      '<div class="panel"><div id="dispatch-confirm-table"></div></div>';
+      '<div class="panel"><div id="dispatch-confirm-table"></div></div>' +
+      '<div class="panel" style="margin-top:18px"><h3>Past due \u2014 driver didn\u2019t confirm<span class="count" id="pastdue-count"></span></h3>' +
+      '<p class="panel-sub">These were scheduled for a day that has passed and the driver never marked them done. Fill in what the driver forgot, move them to a new date, or delete them.</p>' +
+      '<div id="pastdue-table"></div></div>';
     renderDispatchConfirmTable();
+    renderPastDueTable();
+  }
+  function dispatchCardsPastDue() {
+    var iso = today();
+    return state.dispatchcards.filter(function (c) { return c.scheduledDate && c.scheduledDate < iso && c.driver && !c.driverConfirmed && !c.dispatcherConfirmed; })
+      .sort(function (a, b) { return (a.scheduledDate || "").localeCompare(b.scheduledDate || ""); });
+  }
+  function renderPastDueTable() {
+    var list = dispatchCardsPastDue();
+    el("pastdue-count").textContent = list.length;
+    var rows = list.map(function (c) {
+      var days = daysBetween(c.scheduledDate, today());
+      return "<tr>" +
+        '<td class="nowrap"><strong>' + esc(weekdayLabel(c.scheduledDate) + " " + fmtDate(c.scheduledDate)) + '</strong><div class="subline" style="color:var(--danger)">' + days + " day" + (days === 1 ? "" : "s") + " overdue</div></td>" +
+        "<td>" + esc(c.driver) + "</td>" +
+        '<td><span class="badge ' + dispatchCatClass(c.category) + '">' + esc(c.category) + "</span></td>" +
+        "<td><strong>" + esc(c.customerName) + "</strong></td>" +
+        "<td>" + esc(dispatchCardSummary(c)) + (c.hardDate ? ' <span class="badge b-danger">HARD DATE</span>' : "") + "</td>" +
+        '<td class="right nowrap">' +
+        '<button class="btn sm primary" data-act="pd-fill" data-id="' + esc(c.id) + '">Enter driver info</button> ' +
+        '<button class="btn sm" data-act="pd-resched" data-id="' + esc(c.id) + '">Reschedule</button> ' +
+        (c.sourceType === "quote" && quoteById(c.sourceId) ? '<button class="btn sm ghost" data-act="quote-edit" data-id="' + esc(c.sourceId) + '">View quote</button> ' : "") +
+        '<button class="btn sm ghost danger" data-act="dispatch-delete-prompt" data-id="' + esc(c.id) + '">Delete</button></td></tr>';
+    }).join("");
+    if (!list.length) rows = '<tr><td colspan="6" class="empty-row">Nothing past due \u2014 every scheduled job has been confirmed by its driver.</td></tr>';
+    el("pastdue-table").innerHTML =
+      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Scheduled</th><th>Driver</th><th>Type</th><th>Customer</th><th>Job</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+  }
+  function pastDueFillModal(cardId) {
+    var card = dispatchCardById(cardId);
+    if (!card) return;
+    var needsContainer = card.category !== "Contract Haul";
+    var spec = card.category === "Sales" && !card.containerId && (card.specType || card.specCondition || card.specColor);
+    var containerHtml = "";
+    if (needsContainer) {
+      if (card.containerId) containerHtml = '<div class="formula">Container on this job: <strong class="mono">' + esc(card.containerId) + "</strong></div>";
+      else containerHtml =
+        (spec ? '<div class="formula"><strong>Driver\u2019s choice</strong> \u2014 must be an available container matching: ' + esc([card.specType, card.specCondition, card.specColor].filter(Boolean).join(", ")) + "</div>" : "") +
+        '<div class="fld"><label>Container # the driver used *</label><input class="in mono" id="pd-container" placeholder="e.g. 123456-7"></div>';
+    }
+    openModal("Enter driver info \u2014 " + esc(card.customerName),
+      '<div class="formula">' + esc(card.category) + " \u00b7 " + esc(dispatchCardSummary(card)) + "<br>Scheduled " + esc(fmtDate(card.scheduledDate)) + " \u00b7 " + esc(card.driver) + "</div>" +
+      containerHtml +
+      '<div class="fld"><label>Date it was actually done *</label><input class="in" id="pd-actual" type="date" max="' + esc(today()) + '" value="' + esc(card.scheduledDate) + '"></div>' +
+      '<div class="muted" style="font-size:12.5px">This does what the driver\u2019s \u201c' + esc(driverConfirmLabel(card.category)) + '\u201d button would \u2014 the job then moves up to Review &amp; confirm.</div>',
+      '<button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" data-act="pd-fill-apply" data-id="' + esc(card.id) + '">Save &amp; move to review</button>');
+  }
+  function pastDueFillApply(cardId) {
+    var card = dispatchCardById(cardId);
+    if (!card) return;
+    var actual = el("pd-actual").value;
+    if (!actual) return flash("Enter the date it was done", true);
+    if (actual > today()) return flash("The date done can\u2019t be in the future", true);
+    var patch = { driverConfirmed: true, actualDate: actual };
+    var needsContainer = card.category !== "Contract Haul";
+    if (needsContainer && !card.containerId) {
+      var raw = el("pd-container") ? el("pd-container").value.trim() : "";
+      if (!raw) return flash("Enter the container #", true);
+      var found = findContainerCaseInsensitive(card.category === "Sales" ? "sales" : "fleet", raw);
+      if (!found) return flash("\u201c" + raw + "\u201d isn\u2019t in " + (card.category === "Sales" ? "sales" : "fleet") + " inventory", true);
+      if (card.category === "Sales") {
+        var why = specMismatchReasons(found, card);
+        if (why.length) return flash("Can\u2019t use " + found.id + ": " + why.join("; "), true);
+        state.salescontainers = state.salescontainers.map(function (c) { return c.id === found.id ? Object.assign({}, c, { status: "Reserved", reservedByQuoteId: card.sourceId, reservedAt: today() }) : c; });
+      }
+      patch.containerId = found.id; patch.scanStatus = "assigned"; patch.scannedValue = raw;
+    }
+    state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === cardId ? Object.assign({}, c, patch) : c; });
+    closeModal();
+    flash("Saved \u2014 " + card.customerName + " moved to Review & confirm");
+    commit();
+  }
+  function pastDueReschedModal(cardId) {
+    var card = dispatchCardById(cardId);
+    if (!card) return;
+    openModal("Reschedule \u2014 " + esc(card.customerName),
+      '<div class="formula">' + esc(card.category) + " \u00b7 " + esc(dispatchCardSummary(card)) + "<br>Was scheduled " + esc(fmtDate(card.scheduledDate)) + " \u00b7 " + esc(card.driver) +
+      (card.hardDate ? '<br><span style="color:var(--danger)">Hard delivery date: ' + esc(fmtDate(card.requestedDate)) + "</span>" : "") + "</div>" +
+      '<div class="row2"><div class="fld"><label>New date *</label><input class="in" id="pd-newdate" type="date" min="' + esc(today()) + '" value="' + esc(today()) + '"></div>' +
+      '<div class="fld"><label>Driver *</label><select class="in" id="pd-newdriver">' + opt(DRIVERS, card.driver || DRIVERS[0]) + "</select></div></div>" +
+      '<div class="muted" style="font-size:12.5px">Mon\u2013Fri only. The driver will see it on their list that day.</div>',
+      '<button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" data-act="pd-resched-apply" data-id="' + esc(card.id) + '">Reschedule</button>');
+  }
+  function pastDueReschedApply(cardId) {
+    var card = dispatchCardById(cardId);
+    if (!card) return;
+    var d = el("pd-newdate").value, drv = el("pd-newdriver").value;
+    if (!d) return flash("Pick a new date", true);
+    if (d < today()) return flash("Pick today or a future date", true);
+    var pd = parts(d), dow = new Date(pd.y, pd.m - 1, pd.d).getDay();
+    if (dow === 0 || dow === 6) return flash("The schedule is Monday\u2013Friday \u2014 pick a weekday", true);
+    if (card.hardDate && card.requestedDate && card.requestedDate !== d && !confirm("This job has a hard delivery date of " + fmtDate(card.requestedDate) + ". Schedule it for " + fmtDate(d) + " anyway?")) return;
+    state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === cardId ? Object.assign({}, c, { scheduledDate: d, driver: drv, released: true }) : c; });
+    closeModal();
+    flash("Rescheduled for " + weekdayLabel(d) + " " + fmtDate(d) + " \u2014 " + drv);
+    commit();
   }
   function dispatchCardsNeedingConfirmation() {
     return state.dispatchcards.filter(function (c) { return c.driverConfirmed && !c.dispatcherConfirmed; })
@@ -4876,6 +4976,10 @@
       if (c) { wrap.style.display = ""; disp.textContent = money(c.bookValue, 0); } else { wrap.style.display = "none"; }
     },
     "quote-lineitem-add": function () { quoteAddLineItem(); },
+    "pd-fill": function (t) { pastDueFillModal(t.getAttribute("data-id")); },
+    "pd-fill-apply": function (t) { pastDueFillApply(t.getAttribute("data-id")); },
+    "pd-resched": function (t) { pastDueReschedModal(t.getAttribute("data-id")); },
+    "pd-resched-apply": function (t) { pastDueReschedApply(t.getAttribute("data-id")); },
     "qh-add": function () { qhAddSection(false); },
     "qh-add-copy": function () { qhAddSection(true); },
     "qh-copy": function (t) { qhCopyPrev(t.getAttribute("data-n")); },
