@@ -28,6 +28,15 @@
   nav.tabs { display:flex; gap:2px; margin-top:14px; overflow-x:auto; }
   nav.tabs button { background:transparent; border:0; color:#a8c6b3; padding:11px 16px; cursor:pointer; font-size:13.5px; font-weight:550; border-bottom:3px solid transparent; white-space:nowrap; font-family:var(--font); }
   nav.tabs button:hover { color:#fff; }
+  .sugg-item.fresh { border-color:#e5302a; box-shadow:0 0 0 3px rgba(229,48,42,.14); }
+  .sugg-new { display:inline-block; background:#e5302a; color:#fff; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; }
+  .sugg-thumbs { display:flex; gap:8px; flex-wrap:wrap; }
+  .sugg-thumb { position:relative; display:inline-block; }
+  .sugg-thumb img { height:84px; max-width:160px; object-fit:cover; border-radius:8px; border:1px solid var(--line); cursor:zoom-in; display:block; }
+  .sugg-rm { position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%; border:none; background:#333; color:#fff; cursor:pointer; line-height:20px; padding:0; }
+  .sugg-thread { border-left:3px solid var(--line); padding-left:12px; display:grid; gap:10px; }
+  .sugg-reply.sys { font-size:12px; color:var(--muted); }
+  .sugg-replybox { display:grid; gap:8px; }
   .tab-badge.soft { background:#d98a1f; box-shadow:0 0 0 2px rgba(217,138,31,.25); }
   .sugg-item { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; display:grid; gap:8px; margin-bottom:10px; }
   .sugg-item.done { opacity:.6; }
@@ -593,6 +602,9 @@
         state.suggestions = sg.data.map(rowFromDb); SUGG_OK = true;
       } catch (e2) { state.suggestions = []; SUGG_OK = false; }
       try {
+        if (SUGG_OK) { var s2 = await sb.from("suggestions").select("photos,replies").limit(1); SUGG_V2 = !s2.error; } else SUGG_V2 = false;
+      } catch (e4) { SUGG_V2 = false; }
+      try {
         var sp = await sb.from("dispatchcards").select("sort_order").limit(1);
         SORT_OK = !sp.error;
       } catch (e3) { SORT_OK = false; }
@@ -989,8 +1001,9 @@
         b.title = (nc + npd) ? (nc + " to confirm \u00b7 " + npd + " past due") : "";
       }
       if (b.getAttribute("data-tab") === "suggestions") {
-        var ns = state.suggestions.filter(function (x) { return (x.status || "New") === "New"; }).length;
-        b.innerHTML = "Suggestions" + (ns ? ' <span class="tab-badge soft">' + ns + "</span>" : "");
+        var ns = ui.tab === "suggestions" ? 0 : suggUnreadCount();
+        b.innerHTML = "Suggestions" + (ns ? ' <span class="tab-badge">' + ns + "</span>" : "");
+        b.title = ns ? ns + " suggestion" + (ns === 1 ? "" : "s") + " with new activity" : "";
       }
       b.classList.toggle("on", b.getAttribute("data-tab") === ui.tab);
     });
@@ -3784,58 +3797,162 @@
   /* --------------------------- suggestions --------------------------- */
   var SUGG_STATUSES = ["New", "Reviewing", "Planned", "Done", "Won't do"];
   var SUGG_TAB_NAMES = { inventory: "Inventory", customers: "Customers", rentals: "Rentals", billing: "Billing", collections: "Collections", haul: "Contract Haul", "new-quote": "New Quote", quotes: "Quotes", dispatch: "Dispatch", confirmations: "Needs Confirmation", "rate-card": "Rate Card", suggestions: "Suggestions" };
+  var SUGG_V2 = false; // true once suggestions has the photos + replies columns
+  var SUGG_SEEN = null, SUGG_SEEN_EMAIL = null;
+  var SUGG_MAX_PHOTOS = 4;
+  function suggName(email) { return !email ? "someone" : (email === AUTH.email ? "You" : String(email).split("@")[0]); }
+  function suggArr(v) { return Array.isArray(v) ? v : []; }
+  function suggFmtTime(iso) { return iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; }
+  function suggSeenMap() {
+    if (SUGG_SEEN && SUGG_SEEN_EMAIL === AUTH.email) return SUGG_SEEN;
+    var key = "wms-sugg-seen-" + (AUTH.email || ""), m = null;
+    try { m = JSON.parse(window.localStorage.getItem(key) || "null"); } catch (e) {}
+    if (!m || !m._base) { m = { _base: new Date().toISOString() }; try { window.localStorage.setItem(key, JSON.stringify(m)); } catch (e) {} }
+    SUGG_SEEN = m; SUGG_SEEN_EMAIL = AUTH.email;
+    return m;
+  }
+  function suggActivity(x) {
+    var r = suggArr(x.replies), last = r.length ? r[r.length - 1] : null;
+    return last ? { at: last.at, by: last.by } : { at: x.createdAt, by: x.authorEmail };
+  }
+  function suggIsUnread(x) {
+    var a = suggActivity(x), m = suggSeenMap();
+    if (!a.at || a.by === AUTH.email) return false;
+    if (a.by !== x.authorEmail && x.authorEmail !== AUTH.email && !suggArr(x.replies).some(function (r) { return r.by === AUTH.email; })) return false; // a reviewer's reply only pings the author and people already in the thread
+    var a1 = String(a.at);
+    return a1 > new Date(Date.now() - 14 * 864e5).toISOString() && a1 > String(m[x.id] || ""); // new devices only flag the last two weeks
+  }
+  function suggUnreadCount() { return state.suggestions.filter(suggIsUnread).length; }
+  function suggMarkAllSeen() {
+    var m = suggSeenMap(), changed = false;
+    state.suggestions.forEach(function (x) {
+      var a = suggActivity(x);
+      if (a.at && String(a.at) > String(m[x.id] || "")) { m[x.id] = String(a.at); changed = true; }
+    });
+    if (changed) { try { window.localStorage.setItem("wms-sugg-seen-" + (AUTH.email || ""), JSON.stringify(m)); } catch (e) {} }
+  }
+  function suggThumbsHtml(list, rmKey) {
+    if (!list.length) return "";
+    return '<div class="sugg-thumbs">' + list.map(function (src, i) {
+      return '<span class="sugg-thumb"><img src="' + esc(src) + '" data-act="sugg-photo" alt="attached photo">' +
+        (rmKey ? '<button type="button" class="sugg-rm" data-act="sugg-photo-rm" data-key="' + esc(rmKey) + '" data-i="' + i + '" title="Remove">×</button>' : "") + "</span>";
+    }).join("") + "</div>";
+  }
+  function suggAttachHtml(key) {
+    return '<label class="btn sm" style="cursor:pointer">📷 Add photo<input type="file" accept="image/*" multiple class="sugg-file" data-key="' + esc(key) + '" style="display:none"></label>';
+  }
+  function suggPhotoBucket(key) {
+    if (key === "new") return (ui.suggPhotos = ui.suggPhotos || []);
+    ui.suggReplyPhotos = ui.suggReplyPhotos || {};
+    return (ui.suggReplyPhotos[key] = ui.suggReplyPhotos[key] || []);
+  }
+  function suggCompress(file) {
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var k = Math.min(1, 1280 / Math.max(img.width, img.height));
+          var c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          res(c.toDataURL("image/jpeg", 0.72));
+        };
+        img.onerror = function () { rej(new Error("Couldn’t read that image")); };
+        img.src = fr.result;
+      };
+      fr.onerror = function () { rej(new Error("Couldn’t read that file")); };
+      fr.readAsDataURL(file);
+    });
+  }
+  async function suggAddPhotos(key, files) {
+    var bucket = suggPhotoBucket(key);
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (!f || !/^image\//.test(f.type || "")) continue;
+      if (bucket.length >= SUGG_MAX_PHOTOS) { flash("Up to " + SUGG_MAX_PHOTOS + " photos each", true); break; }
+      try { bucket.push(await suggCompress(f)); } catch (e) { flash(e.message || "Couldn’t add that photo", true); }
+    }
+    render();
+  }
   function renderSuggestions(v) {
     var filter = ui.suggFilter || "Open";
+    var fresh = ui.suggFresh = ui.suggFresh || {};
+    state.suggestions.forEach(function (x) { if (suggIsUnread(x)) fresh[x.id] = true; });
+    suggMarkAllSeen();
+    var can = SUGG_V2 || !sb;
     v.innerHTML =
-      '<div class="pagehead"><div><h2>Suggestions<span class="count" id="sugg-count"></span></h2><div class="sub">Spot something that could work better? Jot it down — it goes straight onto the review list.</div></div></div>' +
+      '<div class="pagehead"><div><h2>Suggestions<span class="count" id="sugg-count"></span></h2><div class="sub">Spot something that could work better? Jot it down — add a photo if it helps. Replies show up here with a red dot.</div></div></div>' +
       (SUGG_OK || !sb ? "" : '<div class="banner" style="margin-bottom:14px">Suggestions aren’t saving yet — run <strong>migration-add-suggestions.sql</strong> in Supabase once, then reload.</div>') +
+      (SUGG_OK && !SUGG_V2 && sb ? '<div class="banner" style="margin-bottom:14px">Photos and replies need one more step — run the updated <strong>migration-add-suggestions.sql</strong> in Supabase, then reload.</div>' : "") +
       '<div class="card" style="padding:16px;margin-bottom:16px">' +
-      '<div class="fld"><label>Your suggestion</label><textarea class="in" id="sugg-text" rows="3" placeholder="e.g. Show the customer’s phone number on the dispatch card"></textarea></div>' +
+      '<div class="fld"><label>Your suggestion</label><textarea class="in" id="sugg-text" rows="3" placeholder="e.g. Show the customer’s phone number on the dispatch card">' + esc(ui.suggDraft || "") + "</textarea></div>" +
+      (can ? suggThumbsHtml(ui.suggPhotos || [], "new") : "") +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn primary" data-act="sugg-add">Submit suggestion</button>' +
-      '<span class="muted" style="font-size:12.5px">Tip: Ctrl/⌘ + Enter submits. We note which page you were on.</span></div></div>' +
+      (can ? suggAttachHtml("new") : "") +
+      '<span class="muted" style="font-size:12.5px">Ctrl/⌘ + Enter submits · you can paste a screenshot too · we note which page you were on.</span></div></div>' +
       '<div class="chips" style="margin-bottom:12px">' +
       ["Open", "Done", "Won't do", "All"].map(function (f) { return '<button class="chip ' + (filter === f ? "on" : "") + '" data-act="sugg-filter" data-filter="' + esc(f) + '">' + esc(f) + "</button>"; }).join("") + "</div>" +
       '<div id="sugg-list"></div>';
     renderSuggestionList();
+    renderAuthBar();
+    var tb = document.querySelector('#tabs [data-tab="suggestions"] .tab-badge'); if (tb) tb.remove();
   }
   function suggVisible() {
     var f = ui.suggFilter || "Open";
     return state.suggestions.filter(function (x) {
       var st = x.status || "New";
+      if ((ui.suggFresh || {})[x.id]) return true;
       if (f === "All") return true;
       if (f === "Open") return st !== "Done" && st !== "Won't do";
       return st === f;
-    }).sort(function (a, b) { return String(b.createdAt || "").localeCompare(String(a.createdAt || "")); });
+    }).sort(function (a, b) { return String(suggActivity(b).at || "").localeCompare(String(suggActivity(a).at || "")); });
+  }
+  function suggReplyHtml(x, r) {
+    if (r.kind === "status") return '<div class="sugg-reply sys">' + esc(suggName(r.by)) + " set the status to <strong>" + esc(r.text) + "</strong> · " + esc(suggFmtTime(r.at)) + "</div>";
+    return '<div class="sugg-reply"><div class="sugg-meta"><strong>' + esc(suggName(r.by)) + "</strong> · " + esc(suggFmtTime(r.at)) + "</div>" +
+      (r.text ? '<div class="sugg-text">' + esc(r.text) + "</div>" : "") + suggThumbsHtml(suggArr(r.photos), null) + "</div>";
   }
   function renderSuggestionList() {
     var list = suggVisible();
     var c = el("sugg-count"); if (c) c.textContent = list.length;
+    var can = SUGG_V2 || !sb;
     if (!list.length) { el("sugg-list").innerHTML = '<div class="card empty"><h3>' + ((ui.suggFilter || "Open") === "Open" ? "Nothing waiting for review" : "Nothing here") + "</h3><p>New suggestions will show up here.</p></div>"; return; }
+    var fresh = ui.suggFresh || {};
     el("sugg-list").innerHTML = list.map(function (x) {
       var st = x.status || "New";
-      var when = x.createdAt ? new Date(x.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-      return '<div class="sugg-item' + (st === "Done" || st === "Won't do" ? " done" : "") + '" data-id="' + esc(x.id) + '">' +
+      var replies = suggArr(x.replies);
+      var isFresh = !!fresh[x.id];
+      var rp = (ui.suggReplyPhotos || {})[x.id] || [];
+      return '<div class="sugg-item' + (st === "Done" || st === "Won't do" ? " done" : "") + (isFresh ? " fresh" : "") + '" data-id="' + esc(x.id) + '">' +
+        (isFresh ? '<div><span class="sugg-new">● New activity</span></div>' : "") +
         '<div class="sugg-text">' + esc(x.text) + "</div>" +
-        '<div class="sugg-meta">' + esc(x.authorEmail || "unknown") + (when ? " · " + esc(when) : "") + (x.page ? " · from " + esc(SUGG_TAB_NAMES[x.page] || x.page) : "") + "</div>" +
+        suggThumbsHtml(suggArr(x.photos), null) +
+        '<div class="sugg-meta">' + esc(suggName(x.authorEmail)) + (suggFmtTime(x.createdAt) ? " · " + esc(suggFmtTime(x.createdAt)) : "") + (x.page ? " · from " + esc(SUGG_TAB_NAMES[x.page] || x.page) : "") + "</div>" +
+        (replies.length ? '<div class="sugg-thread">' + replies.map(function (r) { return suggReplyHtml(x, r); }).join("") + "</div>" : "") +
+        (can ? '<div class="sugg-replybox"><textarea class="in sugg-reply-text" data-id="' + esc(x.id) + '" rows="2" placeholder="Write a reply…">' + esc((ui.suggReplyDraft || {})[x.id] || "") + "</textarea>" +
+          suggThumbsHtml(rp, x.id) +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm primary" data-act="sugg-reply" data-id="' + esc(x.id) + '">Reply</button>' + suggAttachHtml(x.id) + "</div></div>" : "") +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
         '<select class="in sugg-status" data-id="' + esc(x.id) + '" style="width:auto">' + opt(SUGG_STATUSES, st) + "</select>" +
-        '<input class="in sugg-note" data-id="' + esc(x.id) + '" placeholder="Review note (optional)" value="' + esc(x.adminNote || "") + '" style="flex:1;min-width:200px">' +
+        '<input class="in sugg-note" data-id="' + esc(x.id) + '" placeholder="Private review note (optional)" value="' + esc(x.adminNote || "") + '" style="flex:1;min-width:200px">' +
         '<button class="btn sm ghost danger" data-act="sugg-del" data-id="' + esc(x.id) + '">Delete</button></div></div>';
     }).join("");
   }
   async function suggDb(fn) {
     if (!sb) return true;
     try { var r = await fn(sb.from("suggestions")); if (r && r.error) throw r.error; return true; }
-    catch (e) { flash("Couldn’t save the suggestion: " + (e.message || e), true); return false; }
+    catch (e) { flash("Couldn’t save: " + (e.message || e), true); return false; }
   }
   async function suggAdd() {
     var t = el("sugg-text");
     var text = t.value.trim();
     if (!text) return flash("Type your suggestion first", true);
     var obj = { id: uid(), text: text, authorEmail: AUTH.email || "", createdAt: new Date().toISOString(), page: ui.prevTab && ui.prevTab !== "suggestions" ? ui.prevTab : "", status: "New", adminNote: "" };
+    if (SUGG_V2 || !sb) { obj.photos = (ui.suggPhotos || []).slice(); obj.replies = []; }
     if (!(await suggDb(function (tb) { return tb.insert(rowToDb(obj)); }))) return;
     state.suggestions.unshift(obj);
-    t.value = "";
+    t.value = ""; ui.suggDraft = ""; ui.suggPhotos = [];
     flash("Thanks — suggestion submitted");
     render();
   }
@@ -3843,6 +3960,38 @@
     if (!(await suggDb(function (tb) { return tb.update(rowToDb(patch)).eq("id", id); }))) return;
     state.suggestions = state.suggestions.map(function (x) { return x.id === id ? Object.assign({}, x, patch) : x; });
     render();
+  }
+  async function suggAppendReply(id, entry, extra) {
+    var cur = null;
+    state.suggestions.forEach(function (x) { if (x.id === id) cur = x; });
+    if (!cur) return false;
+    var base = suggArr(cur.replies);
+    if (sb && SUGG_V2) {
+      try { var r = await sb.from("suggestions").select("replies").eq("id", id); if (!r.error && r.data && r.data[0]) base = suggArr(r.data[0].replies); } catch (e) {}
+    }
+    var patch = Object.assign({ replies: base.concat([entry]) }, extra || {});
+    if (!(await suggDb(function (tb) { return tb.update(rowToDb(patch)).eq("id", id); }))) return false;
+    state.suggestions = state.suggestions.map(function (x) { return x.id === id ? Object.assign({}, x, patch) : x; });
+    return true;
+  }
+  async function suggReply(id) {
+    var box = document.querySelector('.sugg-reply-text[data-id="' + id + '"]');
+    var text = box ? box.value.trim() : "";
+    var photos = ((ui.suggReplyPhotos || {})[id] || []).slice();
+    if (!text && !photos.length) return flash("Write a reply or add a photo first", true);
+    var ok = await suggAppendReply(id, { by: AUTH.email || "", at: new Date().toISOString(), text: text, photos: photos, kind: "reply" });
+    if (!ok) return;
+    if (ui.suggReplyDraft) delete ui.suggReplyDraft[id];
+    if (ui.suggReplyPhotos) delete ui.suggReplyPhotos[id];
+    flash("Reply sent");
+    render();
+  }
+  async function suggSetStatus(id, status) {
+    var cur = null;
+    state.suggestions.forEach(function (x) { if (x.id === id) cur = x; });
+    if (!cur || (cur.status || "New") === status) return;
+    if (SUGG_V2 || !sb) { if (await suggAppendReply(id, { by: AUTH.email || "", at: new Date().toISOString(), text: status, kind: "status" }, { status: status })) render(); }
+    else suggUpdate(id, { status: status });
   }
   async function suggDelete(id) {
     if (!confirm("Delete this suggestion?")) return;
@@ -5141,10 +5290,14 @@
   /* --------------------------- dispatch --------------------------- */
   var CLICK = {
     "sugg-add": suggAdd,
+    "sugg-reply": function (t) { suggReply(t.getAttribute("data-id")); },
+    "sugg-photo": function (t) { openModal("Photo", '<img src="' + esc(t.getAttribute("src")) + '" style="max-width:100%;border-radius:8px" alt="photo">', '<button class="btn" data-act="modal-close">Close</button>'); },
+    "sugg-photo-rm": function (t) { var b = suggPhotoBucket(t.getAttribute("data-key")); b.splice(Number(t.getAttribute("data-i")), 1); render(); },
     "sugg-filter": function (t) { ui.suggFilter = t.getAttribute("data-filter"); render(); },
     "sugg-del": function (t) { suggDelete(t.getAttribute("data-id")); },
     "tab": function (t) {
       if (ui.tab !== "suggestions") ui.prevTab = ui.tab;
+      if (t.getAttribute("data-tab") !== ui.tab) ui.suggFresh = {};
       ui.tab = t.getAttribute("data-tab");
       try { window.localStorage.setItem("wms-tracker-last-tab", ui.tab); } catch (e) {}
       closeModal(); render();
@@ -5406,11 +5559,20 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.target && e.target.id === "sugg-text" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); suggAdd(); }
+    else if (e.target && e.target.classList && e.target.classList.contains("sugg-reply-text") && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); suggReply(e.target.getAttribute("data-id")); }
     else if (e.key === "Enter" && e.target && (e.target.id === "login-pass" || e.target.id === "login-email" || e.target.id === "login-username")) { doSignIn(); }
     else if (e.key === "Enter" && e.target && e.target.id === "forgot-email") { doSendReset(); }
     else if (e.key === "Enter" && e.target && (e.target.id === "newpass-1" || e.target.id === "newpass-2")) { doSetNewPassword(); }
   });
+  document.addEventListener("paste", function (e) {
+    var t = e.target; if (!t || !(t.id === "sugg-text" || (t.classList && t.classList.contains("sugg-reply-text")))) return;
+    var files = [];
+    Array.prototype.forEach.call((e.clipboardData && e.clipboardData.items) || [], function (it) { if (it.kind === "file" && /^image\//.test(it.type)) { var f = it.getAsFile(); if (f) files.push(f); } });
+    if (files.length) { e.preventDefault(); suggAddPhotos(t.id === "sugg-text" ? "new" : t.getAttribute("data-id"), files); }
+  });
   document.addEventListener("input", function (e) {
+    if (e.target.id === "sugg-text") { ui.suggDraft = e.target.value; return; }
+    if (e.target.classList && e.target.classList.contains("sugg-reply-text")) { (ui.suggReplyDraft = ui.suggReplyDraft || {})[e.target.getAttribute("data-id")] = e.target.value; return; }
     if (e.target.id === "fleet-search") { ui.fleetQ = e.target.value; renderFleetTable(); }
     else if (e.target.id === "rental-search") { ui.rentalQ = e.target.value; renderRentalsTable(); }
     else if (e.target.id === "cust-search") { ui.custQ = e.target.value; renderCustomersTable(); }
@@ -5504,7 +5666,8 @@
 
     else if (e.target.classList.contains("coll-stage-select")) { setCollectionStage(e.target.getAttribute("data-id"), e.target.value); renderCollections(el("view")); }
     else if (e.target.id === "q-category") { quoteShowGroup(e.target.value); }
-    else if (e.target.classList.contains("sugg-status")) { suggUpdate(e.target.getAttribute("data-id"), { status: e.target.value }); }
+    else if (e.target.classList.contains("sugg-status")) { suggSetStatus(e.target.getAttribute("data-id"), e.target.value); }
+    else if (e.target.classList.contains("sugg-file")) { var fl = Array.prototype.slice.call(e.target.files || []); var fk = e.target.getAttribute("data-key"); e.target.value = ""; suggAddPhotos(fk, fl); }
     else if (e.target.classList.contains("sugg-note")) { suggUpdate(e.target.getAttribute("data-id"), { adminNote: e.target.value.trim() }); }
     else if (e.target.id === "dc-hard") { dispatchHardWarnRefresh(); }
     else if (e.target.classList.contains("dtype-sel")) { dtypeApply(e.target); }
