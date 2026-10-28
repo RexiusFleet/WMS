@@ -203,6 +203,10 @@
   .combo-empty { padding:8px 11px; color:var(--muted); font-size:12.5px; }
   .cal-panel { padding:10px 12px; width:260px; max-height:none; overflow:visible; }
   .modal .cal-panel { position:static; width:100%; margin-top:6px; box-shadow:none; }
+  .cal-scroll { position:relative; max-height:290px; overflow-y:auto; scroll-behavior:auto; }
+  .cal-month { margin-bottom:10px; }
+  .cal-mhead { font-weight:650; font-size:13px; padding:6px 0 4px; position:sticky; top:0; background:#fff; z-index:1; }
+  .cal-dowrow { margin-bottom:2px; }
   .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; font-weight:650; font-size:13px; }
   .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center; font-size:12.5px; }
   .cal-dow { color:var(--muted); font-weight:650; padding:4px 0; }
@@ -377,26 +381,32 @@
     var panel = el(fieldPrefix + "-cal");
     if (!panel) return;
     var selectedIso = el(fieldPrefix).value || "";
-    if (!CAL_VIEW_MONTH[fieldPrefix]) CAL_VIEW_MONTH[fieldPrefix] = selectedIso ? monthKey(selectedIso) : nowMonth();
-    var ym = CAL_VIEW_MONTH[fieldPrefix];
-    var p = ym.split("-"); var y = Number(p[0]), m = Number(p[1]);
-    var firstDow = new Date(y, m - 1, 1).getDay();
-    var dim = daysInMonth(y, m);
-    var cells = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(function (d) { return '<div class="cal-dow">' + d + "</div>"; });
-    for (var i = 0; i < firstDow; i++) cells.push("<div></div>");
-    for (var d = 1; d <= dim; d++) {
-      var iso = y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
-      var cls = "cal-day" + (iso === selectedIso ? " cal-sel" : "") + (iso === today() ? " cal-today" : "");
-      cells.push('<div class="' + cls + '" data-act="quote-date-pick" data-field="' + fieldPrefix + '" data-date="' + iso + '">' + d + "</div>");
+    var baseYm = selectedIso ? monthKey(selectedIso) : nowMonth();
+    var ym = baseYm;
+    for (var b = 0; b < 3; b++) ym = prevMonthKey(ym);
+    var months = "";
+    for (var n = 0; n < 30; n++) {
+      var p = ym.split("-"); var y = Number(p[0]), m = Number(p[1]);
+      var firstDow = new Date(y, m - 1, 1).getDay();
+      var dim = daysInMonth(y, m);
+      var cells = "";
+      for (var i = 0; i < firstDow; i++) cells += "<div></div>";
+      for (var d = 1; d <= dim; d++) {
+        var iso = y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+        var cls = "cal-day" + (iso === selectedIso ? " cal-sel" : "") + (iso === today() ? " cal-today" : "");
+        cells += '<div class="' + cls + '" data-act="quote-date-pick" data-field="' + fieldPrefix + '" data-date="' + iso + '">' + d + "</div>";
+      }
+      months += '<div class="cal-month" data-ym="' + ym + '"><div class="cal-mhead">' + calendarMonthLabel(ym) + '</div><div class="cal-grid">' + cells + "</div></div>";
+      ym = nextMonthKey(ym);
     }
     panel.innerHTML =
-      '<div class="cal-head"><button type="button" class="btn sm ghost" data-act="quote-date-prevmonth" data-field="' + fieldPrefix + '">&lsaquo;</button>' +
-      "<span>" + calendarMonthLabel(ym) + "</span>" +
-      '<button type="button" class="btn sm ghost" data-act="quote-date-nextmonth" data-field="' + fieldPrefix + '">&rsaquo;</button></div>' +
-      '<div class="cal-grid">' + cells.join("") + "</div>" +
+      '<div class="cal-grid cal-dowrow">' + ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(function (d) { return '<div class="cal-dow">' + d + "</div>"; }).join("") + "</div>" +
+      '<div class="cal-scroll">' + months + "</div>" +
       '<div class="cal-foot"><button type="button" class="btn sm ghost" data-act="quote-date-clear" data-field="' + fieldPrefix + '">Clear</button>' +
       '<button type="button" class="btn sm ghost" data-act="quote-date-today" data-field="' + fieldPrefix + '">Today</button></div>';
     panel.style.display = "block";
+    var sc = panel.querySelector(".cal-scroll"), target = panel.querySelector('.cal-month[data-ym="' + baseYm + '"]');
+    if (sc && target) sc.scrollTop = target.offsetTop;
     if (panel.scrollIntoView) panel.scrollIntoView({ block: "nearest" });
   }
   function quoteDateToggle(fieldPrefix) {
@@ -496,11 +506,12 @@
   }
   var SORT_OK = false; // true once dispatchcards.sort_order exists in Supabase
   var SORT_WARNED = false;
+  var RENTNO_OK = false; // true once dispatchcards.rental_number exists
   var SUGG_OK = false; // false until the suggestions table exists in Supabase
   var TABLE_KEYS = { containers: "id", customers: "id", rentals: "id", invoices: "id", collections: "account", hauls: "id", salescontainers: "id", quotes: "id", dispatchcards: "id", profiles: "email", salesinvoices: "id", ratecards: "id" };
 
   async function syncTable(table, rows) {
-    if (table === "dispatchcards" && !SORT_OK) rows = rows.map(function (r) { var o = Object.assign({}, r); delete o.sortOrder; return o; });
+    if (table === "dispatchcards" && (!SORT_OK || !RENTNO_OK)) rows = rows.map(function (r) { var o = Object.assign({}, r); if (!SORT_OK) delete o.sortOrder; if (!RENTNO_OK) delete o.rentalNumber; return o; });
     var idField = TABLE_KEYS[table];
     var localIds = rows.map(function (r) { return r[idField]; });
     var sel = await sb.from(table).select(idField);
@@ -608,6 +619,10 @@
         var sp = await sb.from("dispatchcards").select("sort_order").limit(1);
         SORT_OK = !sp.error;
       } catch (e3) { SORT_OK = false; }
+      try {
+        var rp = await sb.from("dispatchcards").select("rental_number").limit(1);
+        RENTNO_OK = !rp.error;
+      } catch (e5) { RENTNO_OK = false; }
       render();
     } catch (e) {
       flash("Couldn't load data from Supabase: " + (e.message || e), true);
@@ -1351,7 +1366,7 @@
         var cust = customerById(r.customerId);
         var haystack = [
           containerLabel(r.containerId), cust ? cust.name : "", cust ? cust.accountNumber : "",
-          r.poNumber, r.rentalNumber
+          r.poNumber, r.rentalNumber, r.shipToAddress
         ].join(" ").toLowerCase();
         return haystack.indexOf(term) !== -1;
       })
@@ -1365,19 +1380,25 @@
       if (r.rentalNumber) refs.push("Rental " + r.rentalNumber);
       if (r.poNumber) refs.push("PO " + r.poNumber);
       var endCell = r.endDate
-        ? '<input class="in mono rental-end-input" type="date" data-id="' + esc(r.id) + '" value="' + esc(r.endDate) + '" style="min-width:150px">'
+        ? '<input class="in mono rental-end-input" type="date" data-id="' + esc(r.id) + '" value="' + esc(r.endDate) + '" style="min-width:150px">' +
+          '<div class="subline">' + (r.actualReturnDate && r.actualReturnDate !== r.endDate ? "Picked up " + esc(fmtDate(r.actualReturnDate)) : "") + "</div>"
         : '<span class="badge b-rent">active</span>';
       var returnCard = rentalScheduledReturnCard(r.id);
       var returnAction = "";
       if (!r.endDate) {
+        var billDate = r.requestedReturnDate || (returnCard && returnCard.requestedDate) || "";
         returnAction = returnCard
-          ? '<span class="badge b-danger">Return scheduled' + (returnCard.scheduledDate ? " " + fmtDate(returnCard.scheduledDate) : "") + "</span>"
+          ? '<div><span class="badge b-danger">Return scheduled</span></div>' +
+            '<div class="subline">Billing ends ' + (billDate ? esc(fmtDate(billDate)) : "\u2014") + "</div>" +
+            '<div class="subline">' + (returnCard.scheduledDate ? "Pickup " + esc(fmtDate(returnCard.scheduledDate)) + (returnCard.driver ? " \u00b7 " + esc(returnCard.driver) : "") : "Pickup not scheduled yet") + "</div>" +
+            '<button class="btn sm ghost" data-act="rental-edit-return" data-id="' + esc(r.id) + '">Edit billing date</button>'
           : '<button class="btn sm" data-act="rental-schedule-return" data-id="' + esc(r.id) + '">Schedule return</button>';
       }
       return "<tr>" +
         '<td class="cid">' + esc(containerLabel(r.containerId)) + "</td>" +
         "<td>" + esc(customerName(r.customerId)) +
         (refs.length ? '<div class="subline mono">' + esc(refs.join(" · ")) + "</div>" : "") + "</td>" +
+        "<td>" + (r.shipToAddress ? esc(r.shipToAddress) : '<span class="muted">\u2014</span>') + "</td>" +
         '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
         '<td class="num muted">' + (r.serviceFee ? money(r.serviceFee, 0) : "—") + "</td>" +
         '<td class="num">' + fmtDate(r.startDate) + "</td>" +
@@ -1386,10 +1407,10 @@
         returnAction +
         "</td></tr>";
     }).join("");
-    if (!shown.length) rows = '<tr><td colspan="7" class="empty-row">No ' + ui.rentalView + " rentals match.</td></tr>";
+    if (!shown.length) rows = '<tr><td colspan="8" class="empty-row">No ' + ui.rentalView + " rentals match.</td></tr>";
     el("rentals-table").innerHTML =
-      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Customer</th><th>Rate/mo</th><th>Service fee</th><th>Start</th><th>' +
-      (ui.rentalView === "active" ? "" : "End (editable)") + "</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>";
+      '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Customer</th><th>Delivery location</th><th>Rate/mo</th><th>Service fee</th><th>Start</th><th>' +
+      (ui.rentalView === "active" ? "" : "Billing end (editable)") + "</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>";
     var countEl = el("rentals-count");
     if (countEl) countEl.textContent = "Showing " + shown.length + " of " + state.rentals.filter(function (r) { return ui.rentalView === "active" ? !r.endDate : r.endDate; }).length;
   }
@@ -1610,30 +1631,53 @@
     if (!r) return;
     openModal("Schedule return",
       "<div>Schedule the return for <span class=\"cid\">" + esc(containerLabel(r.containerId)) + "</span> with " + esc(customerName(r.customerId)) + ". This creates a dispatch card — the rental stays active until the driver and dispatcher confirm the pickup.</div>" +
-      '<div class="fld"><label>Requested return date</label>' +
+      '<div class="fld"><label>Billing return date (the credit is prorated off this)</label>' +
       '<div class="combo-wrap"><input type="hidden" id="rr-date" value="' + today() + '">' +
       '<input class="in" id="rr-date-display" readonly value="' + esc(formatDateDisplay(today())) + '" data-act="quote-date-toggle" data-field="rr-date" style="cursor:pointer">' +
       '<div class="combo-list cal-panel" id="rr-date-cal"></div></div></div>' +
-      '<div class="muted" style="font-size:12px">Billing will prorate the credit off this requested date — the actual pickup date (once the driver completes the job) is tracked separately and won\'t change the credit if the schedule slips.</div>',
+      '<div class="fld"><label>Requested pickup date (when the driver should get it) \u2014 optional</label>' +
+      '<div class="combo-wrap"><input type="hidden" id="rr-pick" value="">' +
+      '<input class="in" id="rr-pick-display" readonly placeholder="Same as the billing date" value="" data-act="quote-date-toggle" data-field="rr-pick" style="cursor:pointer">' +
+      '<div class="combo-list cal-panel" id="rr-pick-cal"></div></div></div>' +
+      '<div class="muted" style="font-size:12px">These can differ \u2014 e.g. billing ends 10/27 but the pickup happens a few days later. The credit follows the billing date; the actual pickup date is recorded when the driver finishes.</div>',
       '<button class="btn" data-act="modal-close">Cancel</button>' +
       '<button class="btn primary" data-act="rental-schedule-return-confirm" data-id="' + esc(id) + '">Schedule return</button>');
+  }
+  function rentalEditReturnModal(id) {
+    var r = rentalById(id), card = rentalScheduledReturnCard(id);
+    if (!r) return;
+    var cur = r.requestedReturnDate || (card && card.requestedDate) || today();
+    openModal("Billing return date",
+      '<div>' + esc(customerName(r.customerId)) + " \u00b7 <span class=\"cid\">" + esc(containerLabel(r.containerId)) + "</span></div>" +
+      '<div class="fld"><label>Billing return date</label><div class="combo-wrap"><input type="hidden" id="er-date" value="' + esc(cur) + '">' +
+      '<input class="in" id="er-date-display" readonly value="' + esc(formatDateDisplay(cur)) + '" data-act="quote-date-toggle" data-field="er-date" style="cursor:pointer">' +
+      '<div class="combo-list cal-panel" id="er-date-cal"></div></div></div>' +
+      '<div class="muted" style="font-size:12px">' + (card && card.scheduledDate ? "Pickup is scheduled for " + esc(fmtDate(card.scheduledDate)) + ". " : "") + "Changing this moves the billing credit only \u2014 it doesn\u2019t move the pickup. Reschedule the pickup from the Dispatch calendar.</div>",
+      '<button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" data-act="rental-edit-return-save" data-id="' + esc(id) + '">Save</button>');
+  }
+  function rentalEditReturnSave(id) {
+    var d = el("er-date").value;
+    if (!d) return flash("Pick a billing return date", true);
+    state.rentals = state.rentals.map(function (x) { return x.id === id ? Object.assign({}, x, { requestedReturnDate: d }) : x; });
+    closeModal(); flash("Billing return date set to " + fmtDate(d)); commit();
   }
   function rentalScheduleReturnConfirm(id) {
     var r = rentalById(id);
     if (!r) return;
     var reqDate = el("rr-date").value || today();
+    var pickDate = el("rr-pick") ? (el("rr-pick").value || "") : "";
     var card = {
       id: uid(), category: "Rental Return", sourceType: "rental", sourceId: r.id,
       customerId: r.customerId, customerName: customerName(r.customerId),
       containerId: r.containerId, containerType: "",
       shipToAddress: r.shipToAddress || "", pickupAddress: "",
-      amount: r.monthlyRate, requestedDate: reqDate, scheduledDate: "", dateType: "", dateNote: "", hardDate: false,
+      amount: r.monthlyRate, requestedDate: pickDate || reqDate, scheduledDate: "", dateType: pickDate ? "Specific Date" : "", dateNote: "", hardDate: false,
       driver: "", released: false, notes: ""
     };
     state.rentals = state.rentals.map(function (x) { return x.id === id ? Object.assign({}, x, { requestedReturnDate: reqDate }) : x; });
     state.dispatchcards.unshift(card);
     closeModal();
-    flash("Return scheduled for " + reqDate + " — added to the dispatch calendar");
+    flash("Return scheduled \u2014 billing ends " + fmtDate(reqDate) + (pickDate && pickDate !== reqDate ? ", pickup requested " + fmtDate(pickDate) : "") + " \u2014 added to the dispatch calendar");
     commit();
   }
 
@@ -4433,17 +4477,21 @@
   function pastDueFillModal(cardId) {
     var card = dispatchCardById(cardId);
     if (!card) return;
+    var isRental = card.category === "Rental Delivery" || card.category === "Rental Return";
     var needsContainer = catNeedsContainer(card.category);
     var spec = card.category === "Sales" && !card.containerId && (card.specType || card.specCondition || card.specColor);
+    var rental = card.sourceType === "rental" ? rentalById(card.sourceId) : null;
+    var rentalNo = card.rentalNumber || (rental && rental.rentalNumber) || "";
     var containerHtml = "";
     if (needsContainer) {
       if (card.containerId) containerHtml = '<div class="formula">Container on this job: <strong class="mono">' + esc(card.containerId) + "</strong></div>";
       else containerHtml =
         (spec ? '<div class="formula"><strong>Driver\u2019s choice</strong> \u2014 must be an available container matching: ' + esc([card.specType, card.specCondition, card.specColor].filter(Boolean).join(", ")) + "</div>" : "") +
-        '<div class="fld"><label>Container # the driver used *</label><input class="in mono" id="pd-container" placeholder="e.g. 123456-7"></div>';
+        '<div class="fld"><label>Container # the driver used' + (isRental ? " (optional)" : " *") + '</label><input class="in mono" id="pd-container" placeholder="e.g. 123456-7"></div>';
     }
     openModal("Enter driver info \u2014 " + esc(card.customerName),
       '<div class="formula">' + esc(card.category) + " \u00b7 " + esc(dispatchCardSummary(card)) + "<br>Scheduled " + esc(fmtDate(card.scheduledDate)) + " \u00b7 " + esc(card.driver) + "</div>" +
+      (isRental ? '<div class="fld"><label>Rental # (optional)</label><input class="in mono" id="pd-rentalno" value="' + esc(rentalNo) + '" placeholder="e.g. 1042"></div>' : "") +
       containerHtml +
       '<div class="fld"><label>Date it was actually done *</label><input class="in" id="pd-actual" type="date" max="' + esc(today()) + '" value="' + esc(card.scheduledDate) + '"></div>' +
       '<div class="muted" style="font-size:12.5px">This does what the driver\u2019s \u201c' + esc(driverConfirmLabel(card.category)) + '\u201d button would \u2014 the job then moves up to Review &amp; confirm.</div>',
@@ -4456,18 +4504,27 @@
     if (!actual) return flash("Enter the date it was done", true);
     if (actual > today()) return flash("The date done can\u2019t be in the future", true);
     var patch = { driverConfirmed: true, actualDate: actual };
+    var isRental = card.category === "Rental Delivery" || card.category === "Rental Return";
     var needsContainer = catNeedsContainer(card.category);
+    if (isRental && el("pd-rentalno")) {
+      patch.rentalNumber = el("pd-rentalno").value.trim();
+      if (card.sourceType === "rental") {
+        state.rentals = state.rentals.map(function (r) { return r.id === card.sourceId && patch.rentalNumber ? Object.assign({}, r, { rentalNumber: patch.rentalNumber }) : r; });
+      }
+    }
     if (needsContainer && !card.containerId) {
       var raw = el("pd-container") ? el("pd-container").value.trim() : "";
-      if (!raw) return flash("Enter the container #", true);
-      var found = findContainerCaseInsensitive(card.category === "Sales" ? "sales" : "fleet", raw);
-      if (!found) return flash("\u201c" + raw + "\u201d isn\u2019t in " + (card.category === "Sales" ? "sales" : "fleet") + " inventory", true);
-      if (card.category === "Sales") {
-        var why = specMismatchReasons(found, card);
-        if (why.length) return flash("Can\u2019t use " + found.id + ": " + why.join("; "), true);
-        state.salescontainers = state.salescontainers.map(function (c) { return c.id === found.id ? Object.assign({}, c, { status: "Reserved", reservedByQuoteId: card.sourceId, reservedAt: today() }) : c; });
+      if (!raw && !isRental) return flash("Enter the container #", true);
+      if (raw) {
+        var found = findContainerCaseInsensitive(card.category === "Sales" ? "sales" : "fleet", raw);
+        if (!found) return flash("\u201c" + raw + "\u201d isn\u2019t in " + (card.category === "Sales" ? "sales" : "fleet") + " inventory", true);
+        if (card.category === "Sales") {
+          var why = specMismatchReasons(found, card);
+          if (why.length) return flash("Can\u2019t use " + found.id + ": " + why.join("; "), true);
+          state.salescontainers = state.salescontainers.map(function (c) { return c.id === found.id ? Object.assign({}, c, { status: "Reserved", reservedByQuoteId: card.sourceId, reservedAt: today() }) : c; });
+        }
+        patch.containerId = found.id; patch.scanStatus = "assigned"; patch.scannedValue = raw;
       }
-      patch.containerId = found.id; patch.scanStatus = "assigned"; patch.scannedValue = raw;
     }
     state.dispatchcards = state.dispatchcards.map(function (c) { return c.id === cardId ? Object.assign({}, c, patch) : c; });
     closeModal();
@@ -4568,7 +4625,9 @@
       categoryHtml =
         '<div class="row2"><div class="fld"><label>Monthly rate ($)</label><input class="in mono" id="confirm-monthly-rate" type="number" value="' + esc(src.monthlyRate || 0) + '"></div>' +
         '<div class="fld"><label>Service fee ($)</label><input class="in mono" id="confirm-service-fee" type="number" value="' + esc(src.serviceFee || 0) + '"></div></div>' +
-        '<div class="fld"><label>Requested return date (drives the credit)</label><div class="formula">' + (rental && rental.requestedReturnDate ? fmtDate(rental.requestedReturnDate) : "—") + "</div></div>";
+        '<div class="fld"><label>Billing return date (drives the credit)</label><div class="combo-wrap"><input type="hidden" id="confirm-bill-date" value="' + esc((rental && rental.requestedReturnDate) || card.actualDate || today()) + '">' +
+        '<input class="in" id="confirm-bill-date-display" readonly value="' + esc(formatDateDisplay((rental && rental.requestedReturnDate) || card.actualDate || today())) + '" data-act="quote-date-toggle" data-field="confirm-bill-date" style="cursor:pointer">' +
+        '<div class="combo-list cal-panel" id="confirm-bill-date-cal"></div></div></div>';
     } else if (card.category === "Sales") {
       var sc = salesContainerById((q && q.salesContainerId) || card.containerId);
       var specWarn = "";
@@ -4656,7 +4715,7 @@
       '<input class="in" id="confirm-date-display" readonly value="' + esc(formatDateDisplay(card.actualDate || today())) + '" data-act="quote-date-toggle" data-field="confirm-date" style="cursor:pointer">' +
       '<div class="combo-list cal-panel" id="confirm-date-cal"></div></div></div>' +
       '<div class="muted" style="font-size:12px">' + (card.category === "Rental Return"
-        ? "Billing will still use the originally requested return date for the credit — this date is for your own records."
+        ? "This is the actual pickup date. Billing uses the billing return date above for the credit \u2014 the two can differ."
         : "Billing will use this date to calculate the first prorated invoice.") + "</div>",
       '<button class="btn" data-act="modal-close">Cancel</button>' +
       '<button class="btn primary" data-act="dispatch-confirm-job" data-id="' + esc(card.id) + '">Confirm &amp; send to billing</button>');
@@ -4667,11 +4726,13 @@
     if (!card) return;
     var needsContainer = catNeedsContainer(card.category);
     var containerId = needsContainer ? el("confirm-container").value.trim() : "";
-    if (needsContainer && !containerId) return flash("Enter the container ID before confirming");
+    var rentalCat = card.category === "Rental Delivery" || card.category === "Rental Return";
+    if (needsContainer && !containerId && !rentalCat) return flash("Enter the container ID before confirming");
     var actualDate = el("confirm-date").value || card.actualDate || today();
 
     var q = card.sourceType === "quote" ? quoteById(card.sourceId) : null;
     var rental = card.sourceType === "rental" ? rentalById(card.sourceId) : null;
+    var billDate = el("confirm-bill-date") ? el("confirm-bill-date").value : "";
 
     var shipTo = el("confirm-shipto").value.trim();
     var po = el("confirm-po").value.trim();
@@ -4706,14 +4767,14 @@
         id: uid(), containerId: containerId, customerId: card.customerId,
         monthlyRate: monthlyRate, serviceFee: serviceFee,
         startDate: actualDate, endDate: null,
-        poNumber: po, rentalNumber: "",
+        poNumber: po, rentalNumber: card.rentalNumber || "",
         shipToAddress: shipTo, driver: card.driver || "", notes: notes,
         addedToRecurring: false
       });
     } else if (card.category === "Rental Return") {
       if (rental) {
         state.rentals = state.rentals.map(function (r) {
-          return r.id === rental.id ? Object.assign({}, r, { endDate: r.requestedReturnDate || actualDate, actualReturnDate: actualDate, containerId: containerId || r.containerId }) : r;
+          return r.id === rental.id ? Object.assign({}, r, { endDate: billDate || r.requestedReturnDate || actualDate, requestedReturnDate: billDate || r.requestedReturnDate || "", actualReturnDate: actualDate, containerId: containerId || r.containerId }) : r;
         });
       }
     } else if (card.category === "Sales") {
@@ -5511,6 +5572,8 @@
     "misc-add": function () { miscJobModal(); },
     "misc-create": function () { miscJobCreate(); },
     "dispatch-confirm-misc": function (t) { dispatcherConfirmMisc(t.getAttribute("data-id")); },
+    "rental-edit-return": function (t) { rentalEditReturnModal(t.getAttribute("data-id")); },
+    "rental-edit-return-save": function (t) { rentalEditReturnSave(t.getAttribute("data-id")); },
     "dispatch-schedule": function (t) { dispatchCardModal(dispatchCardById(t.getAttribute("data-id"))); },
     "dispatch-manage": function (t) { dispatchCardModal(dispatchCardById(t.getAttribute("data-id"))); },
     "dispatch-save": function (t) { dispatchCardSave(t.getAttribute("data-id")); },
