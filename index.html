@@ -215,6 +215,9 @@
   .cal-sel { background:var(--primary); color:#fff; }
   .cal-today:not(.cal-sel) { border:1px solid var(--primary); }
   .cal-foot { display:flex; justify-content:space-between; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
+  .dcal-vscroll { position:relative; max-height:calc(100vh - 300px); min-height:420px; overflow-y:auto; padding-right:4px; }
+  .dcal-block { margin-bottom:18px; }
+  .dcal-bhead { position:sticky; top:0; z-index:3; background:var(--surface,#fff); font-weight:700; font-size:14px; padding:6px 2px; border-bottom:2px solid var(--line); margin-bottom:8px; }
   .dispatch-cal { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
   .dispatch-cal.wk5 { grid-template-columns:repeat(5,1fr); }
   .dcal-dow { font-size:11px; font-weight:650; color:var(--muted); text-align:center; padding:4px 0; text-transform:uppercase; }
@@ -528,9 +531,11 @@
     }
   }
 
+  var persistBusy = 0, persistGen = 0, persistEndedAt = 0;
   async function persist() {
     if (!sb) return;
     if (AUTH.role === "driver") return; // drivers write via driverUpdateCardFields (a direct UPDATE), not the upsert-based sync below
+    persistBusy++; persistGen++;
     try {
       await Promise.all([
         syncTable("containers", state.containers),
@@ -548,7 +553,7 @@
       ]);
     } catch (e) {
       flash("Sync error — your change may not have saved: " + (e.message || e), true);
-    }
+    } finally { persistBusy--; persistEndedAt = Date.now(); }
   }
 
   async function loadAllFromSupabase() {
@@ -659,8 +664,12 @@
     realtimeChannel = channel.subscribe();
   }
   async function refetchTable(table) {
+    // don't let a refetch that raced our own save overwrite what was just entered
+    if (persistBusy > 0 || Date.now() - persistEndedAt < 1500) { clearTimeout(refreshTimers[table]); refreshTimers[table] = setTimeout(function () { refetchTable(table); }, 900); return; }
+    var gen = persistGen;
     var res = await sb.from(table).select("*");
     if (res.error) return;
+    if (gen !== persistGen || persistBusy > 0) { clearTimeout(refreshTimers[table]); refreshTimers[table] = setTimeout(function () { refetchTable(table); }, 900); return; }
     var mapped = res.data.map(rowFromDb);
     if (table === "collections") mapped = mapped.map(migrateCollectionRecord);
     state[table] = mapped;
@@ -4879,6 +4888,9 @@
   }
   function dispatchViewLabel() {
     var ref = ui.dispatchRefDate, p = parts(ref);
+    var vis = (ui.dispatchVisKey && ui.dispatchVisMode === ui.dispatchViewMode) ? ui.dispatchVisKey : null;
+    if (vis && ui.dispatchViewMode === "month") return calendarMonthLabel(vis);
+    if (vis && ui.dispatchViewMode === "week") ref = vis;
     if (ui.dispatchViewMode === "day") return new Date(p.y, p.m - 1, p.d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
     if (ui.dispatchViewMode === "week") {
       var days = dispatchWeekRange(ref), sp = parts(days[0]), ep = parts(days[4]);
@@ -4889,6 +4901,9 @@
     return calendarMonthLabel(monthKey(ref));
   }
   function dispatchShiftRef(dir) {
+    var vis = (ui.dispatchVisKey && ui.dispatchVisMode === ui.dispatchViewMode) ? ui.dispatchVisKey : null;
+    if (vis) ui.dispatchRefDate = ui.dispatchViewMode === "month" ? vis + "-01" : vis;
+    ui.dispatchVisKey = null;
     var p = parts(ui.dispatchRefDate);
     var d = new Date(p.y, p.m - 1, p.d);
     if (ui.dispatchViewMode === "day") {
@@ -4969,22 +4984,72 @@
     var label = (flagged ? "⚠ " : "") + driverBadgeHtml(c.driver) + (c.dateType === "ASAP" ? '<strong class="pill-asap">ASAP</strong> ' : "") + esc(dispatchPillLabel(c)) + (pillCity ? ' <span class="dcard-city">· ' + esc(pillCity) + "</span>" : "");
     return '<div class="dcard drag-card ' + dispatchPillClass(c.category) + '" draggable="true" data-act="dispatch-manage" data-id="' + esc(c.id) + '" title="' + esc(c.category) + ": " + esc(c.customerName) + (c.driver ? " — " + esc(c.driver) : " — unassigned") + (c.released ? " — released to driver" : "") + (flagged ? " — SCAN FLAGGED: " + esc(c.scannedValue || "") : "") + '">' + label + "</div>";
   }
+  /* vertical-scroll calendar: months (or weeks) stack top to bottom, scroll to move through time */
+  var DCAL_MONTHS = 18, DCAL_WEEKS = 14;
+  function dispatchBlockKey() {
+    return ui.dispatchViewMode === "week" ? dispatchWeekRange(ui.dispatchRefDate)[0] : monthKey(ui.dispatchRefDate);
+  }
   function renderDispatchCalendar() {
-    if (ui.dispatchViewMode === "day") renderDispatchDayView();
-    else if (ui.dispatchViewMode === "week") renderDispatchWeekView();
-    else renderDispatchMonthView();
+    var host = el("dispatch-calendar");
+    if (ui.dispatchViewMode === "day") { renderDispatchDayView(); ui.dcalMode = "day"; return; }
+    var keepTop = (ui.dcalMode === ui.dispatchViewMode && ui.dcalTop != null) ? ui.dcalTop : null;
+    if (ui.dispatchViewMode === "week") renderDispatchWeekView(); else renderDispatchMonthView();
+    var sc = host.querySelector(".dcal-vscroll");
+    if (!sc) return;
+    var tgt = ui.dispatchScrollTo || (keepTop == null ? dispatchBlockKey() : null);
+    if (tgt) {
+      var blk = sc.querySelector('[data-block="' + tgt + '"]');
+      if (blk) { sc.scrollTop = blk.offsetTop; ui.dcalTop = sc.scrollTop; }
+      ui.dispatchScrollTo = null;
+    } else if (keepTop != null) sc.scrollTop = keepTop;
+    ui.dcalMode = ui.dispatchViewMode;
+    var ticking = false;
+    sc.addEventListener("scroll", function () {
+      ui.dcalTop = sc.scrollTop;
+      if (ticking) return; ticking = true;
+      requestAnimationFrame(function () {
+        ticking = false;
+        var blocks = sc.querySelectorAll(".dcal-block"), cur = null;
+        for (var k = 0; k < blocks.length; k++) { if (blocks[k].offsetTop <= sc.scrollTop + 12) cur = blocks[k]; else break; }
+        if (!cur) return;
+        var key = cur.getAttribute("data-block");
+        ui.dispatchVisKey = key; ui.dispatchVisMode = ui.dispatchViewMode;
+        var lbl = el("dispatch-view-label"); if (lbl) lbl.textContent = dispatchViewLabel();
+      });
+    });
+  }
+  function dispatchMonthWindow() {
+    var ref = monthKey(ui.dispatchRefDate), start = ui.dcalWinStart;
+    var ok = false, k = start;
+    if (start) for (var n = 0; n < DCAL_MONTHS; n++) { if (k === ref) { ok = true; break; } k = nextMonthKey(k); }
+    if (!ok) { start = prevMonthKey(prevMonthKey(ref)); ui.dcalWinStart = start; }
+    var out = []; k = start;
+    for (var m = 0; m < DCAL_MONTHS; m++) { out.push(k); k = nextMonthKey(k); }
+    return out;
+  }
+  function dispatchWeekWindow() {
+    var refMon = dispatchWeekRange(ui.dispatchRefDate)[0], start = ui.dcalWeekStart;
+    var out = [], ok = false;
+    if (start) {
+      var pd = parts(start), d0 = new Date(pd.y, pd.m - 1, pd.d);
+      for (var n = 0; n < DCAL_WEEKS; n++) { var x = new Date(d0); x.setDate(d0.getDate() + n * 7); var iso = isoLocal(x); out.push(iso); if (iso === refMon) ok = true; }
+    }
+    if (!ok) {
+      var pr = parts(refMon), r0 = new Date(pr.y, pr.m - 1, pr.d); r0.setDate(r0.getDate() - 14);
+      ui.dcalWeekStart = isoLocal(r0); out = [];
+      for (var q = 0; q < DCAL_WEEKS; q++) { var y = new Date(r0); y.setDate(r0.getDate() + q * 7); out.push(isoLocal(y)); }
+    }
+    return out;
   }
   function dispatchCardMatchesFilter(c) {
     if (ui.dispatchDriverFilter === "all" || ui.dispatchDriverFilter === "unassigned") return true;
     return c.driver === ui.dispatchDriverFilter;
   }
-  function renderDispatchMonthView() {
-    var ym = monthKey(ui.dispatchRefDate);
+  function dispatchMonthBlockHtml(ym) {
     var cards = dispatchCardsForMonth(ym).filter(dispatchCardMatchesFilter);
     var byDay = {};
     cards.slice().sort(dispatchDaySort).forEach(function (c) { (byDay[c.scheduledDate] = byDay[c.scheduledDate] || []).push(c); });
     var p = ym.split("-"); var y = Number(p[0]), m = Number(p[1]);
-    var firstDow = new Date(y, m - 1, 1).getDay();
     var dim = daysInMonth(y, m);
     var cells = ["Mo", "Tu", "We", "Th", "Fr"].map(function (d) { return '<div class="dcal-dow">' + d + "</div>"; });
     var leadDone = false;
@@ -4998,17 +5063,21 @@
       var drvAttr = (DRIVERS.indexOf(ui.dispatchDriverFilter) !== -1) ? ' data-driver="' + esc(ui.dispatchDriverFilter) + '"' : "";
       cells.push('<div class="' + cls + '" data-date="' + iso + '"' + drvAttr + '><div class="dcal-daynum">' + d + "</div>" + pills + "</div>");
     }
-    el("dispatch-calendar").innerHTML = '<div class="dispatch-cal wk5">' + cells.join("") + "</div>";
+    return '<div class="dcal-block" data-block="' + ym + '"><div class="dcal-bhead">' + calendarMonthLabel(ym) + '</div><div class="dispatch-cal wk5">' + cells.join("") + "</div></div>";
+  }
+  function renderDispatchMonthView() {
+    el("dispatch-calendar").innerHTML = '<div class="dcal-vscroll">' + dispatchMonthWindow().map(dispatchMonthBlockHtml).join("") + "</div>";
   }
   function dispatchDriverLanes() {
     var all = DRIVERS.map(function (d) { return { label: d, driver: d }; });
     if (ui.dispatchDriverFilter === "all" || ui.dispatchDriverFilter === "unassigned") return all;
     return all.filter(function (l) { return l.driver === ui.dispatchDriverFilter; });
   }
-  function renderDispatchWeekView() {
-    var days = dispatchWeekRange(ui.dispatchRefDate);
-    var lanes = dispatchDriverLanes();
-    var html = lanes.map(function (lane) {
+  function dispatchWeekBlockHtml(mondayIso) {
+    var days = dispatchWeekRange(mondayIso);
+    var sp = parts(days[0]), ep = parts(days[4]);
+    var lbl = new Date(sp.y, sp.m - 1, sp.d).toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " \u2013 " + new Date(ep.y, ep.m - 1, ep.d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    var lanes = dispatchDriverLanes().map(function (lane) {
       var cells = ["Mo", "Tu", "We", "Th", "Fr"].map(function (d) { return '<div class="dcal-dow">' + d + "</div>"; });
       days.forEach(function (iso) {
         var dayCards = state.dispatchcards.filter(function (c) { return c.scheduledDate === iso && (c.driver || "") === lane.driver; }).sort(dispatchDaySort);
@@ -5019,7 +5088,10 @@
       return '<div class="driver-lane"><h4 class="driver-lane-label">' + (lane.driver ? driverBadgeHtml(lane.driver) : "") + esc(lane.label) + "</h4>" +
         '<div class="dispatch-cal wk5">' + cells.join("") + "</div></div>";
     }).join("");
-    el("dispatch-calendar").innerHTML = html;
+    return '<div class="dcal-block" data-block="' + days[0] + '"><div class="dcal-bhead">' + lbl + "</div>" + lanes + "</div>";
+  }
+  function renderDispatchWeekView() {
+    el("dispatch-calendar").innerHTML = '<div class="dcal-vscroll">' + dispatchWeekWindow().map(dispatchWeekBlockHtml).join("") + "</div>";
   }
   function dispatchDayRowHtml(c) {
     return '<div class="listrow drag-card" draggable="true" data-act="dispatch-manage" data-id="' + esc(c.id) + '" style="cursor:grab">' +
@@ -5589,10 +5661,10 @@
     },
     "dispatch-confirm-open": function (t) { dispatcherConfirmModal(dispatchCardById(t.getAttribute("data-id"))); },
     "dispatch-confirm-job": function (t) { dispatcherConfirmJob(t.getAttribute("data-id")); },
-    "dispatch-view-mode": function (t) { ui.dispatchViewMode = t.getAttribute("data-mode"); render(); },
-    "dispatch-nav-prev": function () { dispatchShiftRef(-1); render(); },
-    "dispatch-nav-next": function () { dispatchShiftRef(1); render(); },
-    "dispatch-nav-today": function () { ui.dispatchRefDate = today(); render(); },
+    "dispatch-view-mode": function (t) { ui.dispatchVisKey = null; ui.dispatchViewMode = t.getAttribute("data-mode"); ui.dispatchScrollTo = ui.dispatchViewMode === "day" ? null : dispatchBlockKey(); render(); },
+    "dispatch-nav-prev": function () { dispatchShiftRef(-1); ui.dispatchScrollTo = ui.dispatchViewMode === "day" ? null : dispatchBlockKey(); render(); },
+    "dispatch-nav-next": function () { dispatchShiftRef(1); ui.dispatchScrollTo = ui.dispatchViewMode === "day" ? null : dispatchBlockKey(); render(); },
+    "dispatch-nav-today": function () { ui.dispatchVisKey = null; ui.dispatchRefDate = today(); ui.dispatchScrollTo = ui.dispatchViewMode === "day" ? null : dispatchBlockKey(); render(); },
     "queue-filter": function (t) { ui.queueFilter = t.getAttribute("data-filter"); render(); },
     "dispatch-driver-filter": function (t) { ui.dispatchDriverFilter = t.getAttribute("data-driver"); render(); },
     "profile-add": function () { profileModal(null); },
