@@ -1981,82 +1981,99 @@
     }).join("");
     if (!newList.length) newRows = '<tr><td colspan="12" class="empty-row">No new rentals delivered in ' + monthLabel(ym) + ".</td></tr>";
 
-    /* Stage 2: returns — three independent sections */
+    /* Stages 2–6 share the New Rentals column order (Customer, amount, PO, Size, Cost of rental,
+       Rental #, Container #, Ship to / address, Delivered, then the section's own date/age column). */
+    var BILL_COLS = {
+      customer:  { h: "Customer",          w: "14%" },
+      amount:    { h: "Total",             w: "7%"  },
+      po:        { h: "PO",                w: "7%"  },
+      size:      { h: "Size",              w: "7%"  },
+      rate:      { h: "Cost of rental",    w: "7%"  },
+      setup:     { h: "Cost of set up",    w: "7%"  },
+      rentalno:  { h: "Rental #",          w: "6%"  },
+      container: { h: "Container #",       w: "8%"  },
+      shipto:    { h: "Ship to / address", w: "14%" },
+      delivered: { h: "Delivered",         w: "8%"  },
+      returned:  { h: "Returned",          w: "8%"  },
+      age:       { h: "Age",               w: "5%"  },
+      action:    { h: "",                  w: "12%" }
+    };
+    function billCell(key, r, ex) {
+      var cont = containerById(r.containerId);
+      switch (key) {
+        case "customer":  return "<td>" + customerCellHtml(r.customerId) + "</td>";
+        case "amount":    return '<td class="num money" style="color:' + (ex.amountColor || "var(--primary)") + ';font-weight:700">' + ex.amountHtml + "</td>";
+        case "po":        return "<td>" + (esc(r.poNumber) || "—") + "</td>";
+        case "size":      return "<td>" + esc(cont ? cont.type : "—") + "</td>";
+        case "rate":      return '<td class="num">' + money(r.monthlyRate, 0) + "</td>";
+        case "setup":     return '<td class="num">' + money(r.serviceFee || 0, 0) + "</td>";
+        case "rentalno":  return '<td style="font-weight:600">' + (esc(r.rentalNumber) || "—") + "</td>";
+        case "container": return "<td>" + billingContainerCell(r.containerId) + "</td>";
+        case "shipto":    return "<td>" + (esc(r.shipToAddress) || "—") + "</td>";
+        case "delivered": return '<td class="num" style="white-space:nowrap">' + fmtDate(r.startDate) + "</td>";
+        case "returned":  return '<td class="num" style="white-space:nowrap">' + (r.endDate ? fmtDate(r.endDate) : "—") + "</td>";
+        case "age":       return '<td class="num">' + monthsElapsedCalendar(r.startDate, today()) + " mo</td>";
+        case "action":    return "<td>" + (ex.actionHtml || "") + "</td>";
+      }
+      return "<td></td>";
+    }
+    function billRow(cols, r, ex) {
+      return '<tr class="' + (ex.done ? "row-done" : "") + '">' + cols.map(function (k) { return billCell(k, r, ex); }).join("") + "</tr>";
+    }
+    function billTable(cols, rows, emptyMsg, amountLabel) {
+      if (!rows) rows = '<tr><td colspan="' + cols.length + '" class="empty-row">' + emptyMsg + "</td></tr>";
+      return '<div class="tablewrap"><table class="tbl tbl-newrentals">' +
+        "<colgroup>" + cols.map(function (k) { return '<col style="width:' + BILL_COLS[k].w + '">'; }).join("") + "</colgroup>" +
+        "<thead><tr>" + cols.map(function (k) { return "<th>" + (k === "amount" && amountLabel ? amountLabel : BILL_COLS[k].h) + "</th>"; }).join("") + "</tr></thead>" +
+        "<tbody>" + rows + "</tbody></table></div>";
+    }
+    var noReturns = "No returns recorded in " + monthLabel(ym) + ".";
+
+    /* Stage 2: pick-up fee */
+    var PICKUP_COLS = ["customer", "amount", "po", "size", "rate", "rentalno", "container", "shipto", "delivered", "returned", "action"];
     var pickupRows = retList.map(function (r) {
       var pickupInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "pickup"; });
       var billedLocked = pickupInv && pickupInv.status === "paid";
       var billedBtn = '<button class="btn sm ' + (billedLocked ? "ghost" : (pickupInv ? "danger" : "primary")) + '" data-act="bill-return-billed" data-id="' + esc(r.id) + '">' + (billedLocked ? "Billed — locked" : pickupInv ? "Billed — undo" : "Mark billed") + "</button>";
-      return '<tr class="' + (pickupInv ? "row-done" : "") + '">' +
-        '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
-        "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
-        "<td>" + customerCellHtml(r.customerId) + "</td>" +
-        '<td class="num">' + fmtDate(r.endDate) + "</td>" +
-        '<td class="num money">' + money(r.serviceFee || 0, 0) + "</td>" +
-        '<td class="right">' + billedBtn + "</td></tr>";
+      return billRow(PICKUP_COLS, r, { done: !!pickupInv, amountHtml: money(r.serviceFee || 0, 0), actionHtml: billedBtn });
     }).join("");
-    if (!retList.length) pickupRows = '<tr><td colspan="6" class="empty-row">No returns recorded in ' + monthLabel(ym) + ".</td></tr>";
 
-    var creditRows = retList.map(function (r) {
-      var creditInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "credit"; });
-      var credit = returnProrateCredit(r.monthlyRate, r.endDate);
-      var creditBtn = '<button class="btn sm ' + (creditInv ? "danger" : "primary") + '" data-act="bill-return-credit" data-id="' + esc(r.id) + '">' + (creditInv ? "Credit issued — undo" : "Issue credit") + "</button>";
-      return '<tr class="' + (creditInv ? "row-done" : "") + '">' +
-        '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
-        "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
-        "<td>" + customerCellHtml(r.customerId) + "</td>" +
-        '<td class="num">' + fmtDate(r.endDate) + "</td>" +
-        '<td class="num" style="color:var(--credit)">-' + money(credit, 0) + "</td>" +
-        '<td class="right">' + creditBtn + "</td></tr>";
-    }).join("");
-    if (!retList.length) creditRows = '<tr><td colspan="6" class="empty-row">No returns recorded in ' + monthLabel(ym) + ".</td></tr>";
-
+    /* Stage 3: removed from recurring */
+    var REMOVED_COLS = ["customer", "amount", "po", "size", "rentalno", "container", "shipto", "delivered", "returned", "action"];
     var removedRows = retList.map(function (r) {
       var removed = !r.addedToRecurring;
       var removedBtn = '<button class="btn sm ' + (removed ? "danger" : "primary") + '" data-act="bill-return-removed" data-id="' + esc(r.id) + '">' + (removed ? "Removed — undo" : "Remove from recurring") + "</button>";
-      return '<tr class="' + (removed ? "row-done" : "") + '">' +
-        '<td class="cid">' + billingContainerCell(r.containerId) + "</td>" +
-        "<td>" + (esc(r.rentalNumber) || "—") + "</td>" +
-        "<td>" + customerCellHtml(r.customerId) + "</td>" +
-        '<td class="num">' + fmtDate(r.endDate) + "</td>" +
-        '<td class="num">' + money(r.monthlyRate, 0) + "/mo</td>" +
-        '<td class="right">' + removedBtn + "</td></tr>";
+      return billRow(REMOVED_COLS, r, { done: removed, amountHtml: money(r.monthlyRate, 0), actionHtml: removedBtn });
     }).join("");
-    if (!retList.length) removedRows = '<tr><td colspan="6" class="empty-row">No returns recorded in ' + monthLabel(ym) + ".</td></tr>";
 
-    /* Stage 3: needs recurring — stays visible after marking, for confirmation this month */
+    /* Stage 4: needs recurring — stays visible after marking, for confirmation this month */
+    var PENDING_COLS = ["customer", "amount", "po", "size", "rentalno", "container", "shipto", "delivered", "age", "action"];
     var pendingRows = pendingList.map(function (r) {
-      var elapsed = monthsElapsedCalendar(r.startDate, today());
       var done = r.addedToRecurring;
       var actionBtn = done
         ? '<button class="btn sm ghost" data-act="bill-mark-recurring" data-id="' + esc(r.id) + '">Done — undo</button>'
         : '<button class="btn sm primary" data-act="bill-mark-recurring" data-id="' + esc(r.id) + '">Mark added to recurring</button>';
-      return '<tr class="' + (done ? "row-done" : "") + '">' +
-        '<td class="cid">' + esc(containerLabel(r.containerId)) + "</td>" +
-        "<td>" + customerCellHtml(r.customerId) + "</td>" +
-        '<td class="num">' + fmtDate(r.startDate) + "</td>" +
-        '<td class="num">' + elapsed + " mo</td>" +
-        '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
-        '<td class="right">' + actionBtn + "</td></tr>";
+      return billRow(PENDING_COLS, r, { done: done, amountHtml: money(r.monthlyRate, 0), actionHtml: actionBtn });
     }).join("");
-    if (!pendingList.length) pendingRows = '<tr><td colspan="5" class="empty-row">Nothing waiting — everything eligible is already on the recurring system.</td></tr>';
 
-    /* Stage 4: roster */
+    /* Stage 5: return credit */
+    var CREDIT_COLS = ["customer", "amount", "po", "size", "rate", "rentalno", "container", "shipto", "delivered", "returned", "action"];
+    var creditRows = retList.map(function (r) {
+      var creditInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "credit"; });
+      var credit = returnProrateCredit(r.monthlyRate, r.endDate);
+      var creditBtn = '<button class="btn sm ' + (creditInv ? "danger" : "primary") + '" data-act="bill-return-credit" data-id="' + esc(r.id) + '">' + (creditInv ? "Credit issued — undo" : "Issue credit") + "</button>";
+      return billRow(CREDIT_COLS, r, { done: !!creditInv, amountHtml: "-" + money(credit, 0), amountColor: "var(--credit)", actionHtml: creditBtn });
+    }).join("");
+
+    /* Stage 6: roster */
+    var ROSTER_COLS = ["customer", "amount", "po", "size", "rentalno", "container", "shipto", "delivered", "action"];
     var rosterRows = roster.map(function (r) {
       var existingInv = state.invoices.find(function (i) { return i.rentalId === r.id && i.kind === "recurring" && i.periodMonth === ym; });
-      var cont = containerById(r.containerId);
       var actionBtn = existingInv
         ? '<button class="btn sm ' + (existingInv.status === "paid" ? "ghost" : "danger") + '" data-act="bill-recurring-toggle" data-id="' + esc(r.id) + '">' + (existingInv.status === "paid" ? "Paid — locked" : "Undo") + "</button>"
         : '<button class="btn sm primary" data-act="bill-recurring-toggle" data-id="' + esc(r.id) + '">Bill</button>';
-      return '<tr class="' + (existingInv ? "row-done" : "") + '">' +
-        "<td>" + customerCellHtml(r.customerId) + "</td>" +
-        "<td>" + esc(cont ? cont.type : "—") + "</td>" +
-        '<td class="num">' + money(r.monthlyRate, 0) + "</td>" +
-        '<td class="cid">' + esc(containerLabel(r.containerId)) + "</td>" +
-        "<td>" + (esc(r.shipToAddress) || "—") + "</td>" +
-        '<td class="num">' + fmtDate(r.startDate) + "</td>" +
-        '<td class="right">' + actionBtn + "</td></tr>";
+      return billRow(ROSTER_COLS, r, { done: !!existingInv, amountHtml: money(r.monthlyRate, 0), actionHtml: actionBtn });
     }).join("");
-    if (!roster.length) rosterRows = '<tr><td colspan="7" class="empty-row">No rentals are flagged as on-recurring yet.</td></tr>';
 
     var newPendingCount = newList.filter(function (r) { return !invoiceExists(r.id, "initial", null); }).length;
     var pickupPendingCount = retList.filter(function (r) { return !state.invoices.some(function (i) { return i.rentalId === r.id && i.kind === "pickup"; }); }).length;
@@ -2083,35 +2100,35 @@
         '<span class="stage-badge">2</span>&nbsp; Pick-up fee billing — ' + monthLabel(ym),
         "Bill the customer the pickup fee for each container returned this month.",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Pickup fee</th><th></th></tr></thead><tbody>' + pickupRows + "</tbody></table></div>",
+        billTable(PICKUP_COLS, pickupRows, noReturns, "Pickup fee"),
         pickupPendingCount) +
 
       billingSectionHtml("removed",
         '<span class="stage-badge">3</span>&nbsp; Removed from recurring — ' + monthLabel(ym),
         "Take each returned container off the standing recurring roster.",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Rate</th><th></th></tr></thead><tbody>' + removedRows + "</tbody></table></div>",
+        billTable(REMOVED_COLS, removedRows, noReturns, "Cost of rental"),
         removedPendingCount) +
 
       billingSectionHtml("needs-recurring",
         '<span class="stage-badge">4</span>&nbsp; Needs to be added to recurring',
         "Rentals delivered in " + monthLabel(prevMonthKey(ym)) + " that haven't been returned, plus anything older still not flagged. Once marked, it stays here for confirmation but won't bill on the recurring roster until " + monthLabel(nextMonthKey(ym)) + ".",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Customer</th><th>Delivered</th><th>Age</th><th>Rate/mo</th><th></th></tr></thead><tbody>' + pendingRows + "</tbody></table></div>",
+        billTable(PENDING_COLS, pendingRows, "Nothing waiting — everything eligible is already on the recurring system.", "Cost of rental"),
         needsRecurringPendingCount) +
 
       billingSectionHtml("credit",
         '<span class="stage-badge">5</span>&nbsp; Return credit — ' + monthLabel(ym),
         "Prorated credit for the unused portion of the month, off the originally requested return date.",
         "",
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Container</th><th>Rental #</th><th>Customer</th><th>Returned</th><th>Credit</th><th></th></tr></thead><tbody>' + creditRows + "</tbody></table></div>",
+        billTable(CREDIT_COLS, creditRows, noReturns, "Credit"),
         creditPendingCount) +
 
       billingSectionHtml("roster",
         '<span class="stage-badge">6</span>&nbsp; Recurring roster',
         roster.length + " rentals on the accounting system's auto-bill. Generates a flat monthly invoice per unit for " + monthLabel(ym) + ".",
         '<button class="btn primary sm" data-act="bill-recurring-generate">Generate recurring invoices</button>',
-        '<div class="tablewrap"><table class="tbl"><thead><tr><th>Customer</th><th>Size</th><th>Monthly rent</th><th>Container #</th><th>Ship to address</th><th>Delivered</th><th></th></tr></thead><tbody>' + rosterRows + "</tbody></table></div>",
+        billTable(ROSTER_COLS, rosterRows, "No rentals are flagged as on-recurring yet.", "Cost of rental"),
         rosterPendingCount);
   }
 
