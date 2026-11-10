@@ -510,11 +510,12 @@
   var SORT_OK = false; // true once dispatchcards.sort_order exists in Supabase
   var SORT_WARNED = false;
   var RENTNO_OK = false; // true once dispatchcards.rental_number exists
+  var CONTACT_OK = false; // true once dispatchcards.contact_name / contact_phone exist
   var SUGG_OK = false; // false until the suggestions table exists in Supabase
   var TABLE_KEYS = { containers: "id", customers: "id", rentals: "id", invoices: "id", collections: "account", hauls: "id", salescontainers: "id", quotes: "id", dispatchcards: "id", profiles: "email", salesinvoices: "id", ratecards: "id" };
 
   async function syncTable(table, rows) {
-    if (table === "dispatchcards" && (!SORT_OK || !RENTNO_OK)) rows = rows.map(function (r) { var o = Object.assign({}, r); if (!SORT_OK) delete o.sortOrder; if (!RENTNO_OK) delete o.rentalNumber; return o; });
+    if (table === "dispatchcards" && (!SORT_OK || !RENTNO_OK || !CONTACT_OK)) rows = rows.map(function (r) { var o = Object.assign({}, r); if (!SORT_OK) delete o.sortOrder; if (!RENTNO_OK) delete o.rentalNumber; if (!CONTACT_OK) { delete o.contactName; delete o.contactPhone; } return o; });
     var idField = TABLE_KEYS[table];
     var localIds = rows.map(function (r) { return r[idField]; });
     var sel = await sb.from(table).select(idField);
@@ -628,6 +629,10 @@
         var rp = await sb.from("dispatchcards").select("rental_number").limit(1);
         RENTNO_OK = !rp.error;
       } catch (e5) { RENTNO_OK = false; }
+      try {
+        var cp = await sb.from("dispatchcards").select("contact_name,contact_phone").limit(1);
+        CONTACT_OK = !cp.error;
+      } catch (e6) { CONTACT_OK = false; }
       render();
     } catch (e) {
       flash("Couldn't load data from Supabase: " + (e.message || e), true);
@@ -1714,7 +1719,7 @@
       containerId: r.containerId, containerType: "",
       shipToAddress: r.shipToAddress || "", pickupAddress: "",
       amount: r.monthlyRate, requestedDate: pickDate || reqDate, scheduledDate: "", dateType: pickDate ? "Specific Date" : "", dateNote: "", hardDate: false,
-      driver: "", released: false, notes: ""
+      driver: "", released: false, notes: "", contactName: "", contactPhone: ""
     };
     state.rentals = state.rentals.map(function (x) { return x.id === id ? Object.assign({}, x, { requestedReturnDate: reqDate }) : x; });
     state.dispatchcards.unshift(card);
@@ -4172,6 +4177,12 @@
     return m + 10;
   }
   /* --------------------------- dispatch board --------------------------- */
+  function cardContactHtml(c, big) {
+    if (!c.contactName && !c.contactPhone) return "";
+    var tel = (c.contactPhone || "").replace(/[^\d+]/g, "");
+    var phone = c.contactPhone ? (tel ? '<a href="tel:' + esc(tel) + '" style="color:var(--primary);font-weight:650;text-decoration:none">' + esc(c.contactPhone) + "</a>" : esc(c.contactPhone)) : "";
+    return '<div class="subline" style="margin-top:' + (big ? "0" : "6px") + '">\uD83D\uDCDE Contact: ' + esc(c.contactName || "") + (c.contactName && phone ? " \u2014 " : "") + phone + "</div>";
+  }
   function driverJobCardHtml(c) {
     var needsContainer = catNeedsContainer(c.category);
     var statusNote = "";
@@ -4192,7 +4203,7 @@
       '<span class="badge ' + dispatchCatClass(c.category) + '">' + esc(c.category) + "</span>" +
       '<h3 style="margin:10px 0 4px">' + esc(c.customerName) + "</h3>" +
       '<div class="muted">' + esc(dispatchCardSummary(c)) + "</div>" +
-      statusNote + confirmNote +
+      cardContactHtml(c) + statusNote + confirmNote +
       "</div>";
   }
   function renderDriverView() {
@@ -4248,6 +4259,7 @@
     openModal(esc(card.customerName),
       '<div class="formula">' + esc(card.category) + " · " + esc(dispatchCardSummary(card)) + "</div>" +
       (card.category === "Miscellaneous" && card.notes ? '<div class="banner" style="margin-bottom:0">' + esc(card.notes) + "</div>" : "") +
+      cardContactHtml(card, true) +
       statusHtml +
       (needsContainer && !card.driverConfirmed
         ? (card.containerId
@@ -4716,10 +4728,13 @@
         '<div class="fld"><label>Haul amount ($)</label><input class="in mono" id="confirm-haul-amount" type="number" value="' + esc(src.haulAmount || (card.amount || 0)) + '"></div>';
     }
 
+    var cust = customerById(card.customerId);
     var contactsHtml = q
       ? '<div class="fld"><label>Contacts</label><div id="confirm-contacts-list" class="list"></div>' +
         '<button type="button" class="btn sm ghost" style="margin-top:6px" data-act="confirm-contact-add">+ Add contact</button></div>'
-      : "";
+      : '<div class="row2"><div class="fld"><label>Site contact name</label><input class="in" id="confirm-contact-name" value="' + esc(card.contactName || (cust && cust.contact) || "") + '" placeholder="Who the driver should call"></div>' +
+        '<div class="fld"><label>Site contact phone</label><input class="in" id="confirm-contact-phone" type="tel" value="' + esc(card.contactPhone || (cust && cust.phone) || "") + '" placeholder="541-555-0100"></div></div>' +
+        (sb && !CONTACT_OK ? '<div class="muted" style="font-size:12px;margin-top:-6px">Contact fields won\u2019t save for everyone until <strong>migration-add-dispatch-contact.sql</strong> is run in Supabase once.</div>' : "");
 
     return '<div class="fld"><label>Customer</label><div class="formula">' + esc(card.customerName) + (q && q.quoteNumber ? " · " + esc(q.quoteNumber) : "") + "</div></div>" +
       (q ? '<div class="fld"><label>Email</label><input class="in" id="confirm-email" value="' + esc(q.email || "") + '"></div>' : "") +
@@ -4730,6 +4745,14 @@
       (q ? '<div class="row2"><div class="fld"><label>Payment method</label><input class="in" id="confirm-payment-method" value="' + esc(q.paymentMethod || "") + '"></div>' +
         '<div class="fld"><label>Door orientation</label><select class="in" id="confirm-door-orientation">' + opt([""].concat(DOOR_ORIENTATIONS), q.doorOrientation || "") + "</select></div></div>" : "") +
       '<div class="fld"><label>Notes</label><textarea class="in" id="confirm-notes" rows="2">' + esc(src.notes || "") + "</textarea></div>";
+  }
+  function readCardContact(card) {
+    if (el("confirm-contact-name") || el("confirm-contact-phone")) {
+      return { contactName: el("confirm-contact-name") ? el("confirm-contact-name").value.trim() : "", contactPhone: el("confirm-contact-phone") ? el("confirm-contact-phone").value.trim() : "" };
+    }
+    var list = el("confirm-contacts-list") ? dispatcherCollectConfirmContacts() : [];
+    var first = list[0];
+    return first ? { contactName: first.name || "", contactPhone: first.phone || "" } : { contactName: card.contactName || "", contactPhone: card.contactPhone || "" };
   }
   function applyJobDetailEdits(card) {
     var q = card.sourceType === "quote" ? quoteById(card.sourceId) : null;
@@ -4762,12 +4785,12 @@
       });
     }
     var amount = card.category === "Sales" ? salePrice : card.category === "Contract Haul" ? haulAmount : (monthlyRate + serviceFee);
-    return {
+    return Object.assign(readCardContact(card), {
       shipToAddress: shipTo,
       pickupAddress: card.category === "Contract Haul" ? pickupAddress : "",
       containerType: (card.category === "Rental Delivery" || card.category === "Contract Haul") ? containerType : "",
       amount: amount
-    };
+    });
   }
   function dispatcherConfirmModal(card) {
     if (!card) return;
@@ -4815,6 +4838,7 @@
     var email = el("confirm-email") ? el("confirm-email").value.trim() : "";
     var paymentMethod = el("confirm-payment-method") ? el("confirm-payment-method").value.trim() : "";
     var doorOrientation = el("confirm-door-orientation") ? el("confirm-door-orientation").value : "";
+    var contact = readCardContact(card);
 
     if (q) {
       state.quotes = state.quotes.map(function (x) {
@@ -4857,12 +4881,12 @@
       state.hauls.unshift({
         id: uid(), customerName: card.customerName, accountNumber: "", poNumber: po,
         pickupAddress: pickupAddress, shipToAddress: shipTo,
-        serviceDate: actualDate, amount: haulAmount, contact: "", driver: card.driver || "", notes: notes, billed: false
+        serviceDate: actualDate, amount: haulAmount, contact: contact.contactName || "", driver: card.driver || "", notes: notes, billed: false
       });
     }
 
     state.dispatchcards = state.dispatchcards.map(function (c) {
-      return c.id === cardId ? Object.assign({}, c, { containerId: containerId || c.containerId, actualDate: actualDate, dispatcherConfirmed: true }) : c;
+      return c.id === cardId ? Object.assign({}, c, contact, { containerId: containerId || c.containerId, actualDate: actualDate, dispatcherConfirmed: true }) : c;
     });
     closeModal();
     flash("Confirmed — sent to billing");
